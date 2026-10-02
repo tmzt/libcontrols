@@ -1,8 +1,8 @@
 //! `ControlHost` — Input event dispatcher and focus manager for UI controls.
 
 use crate::event::{
-    ControlAction, ControlHit, ControlPart, EventResponse, InputEvent, Key, KeyboardEvent,
-    MouseButton, MouseEvent,
+    ControlAction, ControlHit, ControlPart, EventResponse, GestureEvent, InputEvent, Key,
+    KeyboardEvent, Modifiers, MouseButton, MouseEvent,
 };
 use crate::handle::ControlHandle;
 use crate::rect::Rect;
@@ -29,6 +29,18 @@ pub trait HostedControl {
 
     /// Record which part of this control the pointer is over, or that it has left.
     fn set_hover(&self, _hover: Option<ControlPart>) {}
+
+    /// Handle a gesture made with the pointer over this control.
+    fn handle_gesture(
+        &self,
+        _event: &GestureEvent,
+        _hit_part: ControlPart,
+    ) -> Option<ControlAction> {
+        None
+    }
+
+    /// Record the modifier keys now held.
+    fn set_modifiers(&self, _modifiers: Modifiers) {}
 }
 
 impl<'a, C: DrawControl> DrawControl for ControlHandle<'a, C> {
@@ -67,6 +79,16 @@ impl<'a, C: HostedControl> HostedControl for ControlHandle<'a, C> {
     #[inline]
     fn set_hover(&self, hover: Option<ControlPart>) {
         self.control().set_hover(hover);
+    }
+
+    #[inline]
+    fn handle_gesture(&self, event: &GestureEvent, hit_part: ControlPart) -> Option<ControlAction> {
+        self.control().handle_gesture(event, hit_part)
+    }
+
+    #[inline]
+    fn set_modifiers(&self, modifiers: Modifiers) {
+        self.control().set_modifiers(modifiers);
     }
 }
 
@@ -122,6 +144,8 @@ impl<'a> ControlHostBuilder<'a> {
             control_ids: self.control_ids,
             focused: None,
             active_drag: None,
+            pointer: None,
+            modifiers: Modifiers::default(),
         };
         host.set_focused_index(self.initial_focus);
         host
@@ -177,6 +201,8 @@ pub struct ControlHost<'a> {
     control_ids: Vec<Option<String>>,
     focused: Option<ControlKey>,
     active_drag: Option<DragGrab>,
+    pointer: Option<[f32; 2]>,
+    modifiers: Modifiers,
 }
 
 impl<'a> ControlHost<'a> {
@@ -313,7 +339,42 @@ impl<'a> ControlHost<'a> {
         match event {
             InputEvent::Mouse(m) => self.deliver_mouse(m),
             InputEvent::Keyboard(k) => self.deliver_keyboard(k),
+            InputEvent::Gesture(g) => self.deliver_gesture(g),
+            InputEvent::Modifiers(m) => self.deliver_modifiers(m),
         }
+    }
+
+    /// Last known pointer position, from the most recent mouse event.
+    #[must_use]
+    pub fn pointer(&self) -> Option<[f32; 2]> {
+        self.pointer
+    }
+
+    /// Modifier keys held, as last reported.
+    #[must_use]
+    pub fn modifiers(&self) -> Modifiers {
+        self.modifiers
+    }
+
+    /// Deliver a gesture to the control under the last known pointer.
+    pub fn deliver_gesture(&mut self, event: GestureEvent) -> EventResponse {
+        let focused = self.focused_index();
+        let Some(hit) = self.pointer.and_then(|pos| self.hit_test(pos)) else {
+            return EventResponse::ignored(focused);
+        };
+        let idx = hit.control_index;
+        let id = self.control_ids[idx].clone();
+        let action = self.controls[idx].handle_gesture(&event, hit.part);
+        EventResponse::handled(idx, id, hit.part, action, focused)
+    }
+
+    /// Record the modifier keys and tell every control.
+    pub fn deliver_modifiers(&mut self, modifiers: Modifiers) -> EventResponse {
+        self.modifiers = modifiers;
+        for control in &self.controls {
+            control.set_modifiers(modifiers);
+        }
+        EventResponse::ignored(self.focused_index())
     }
 
     /// Tell the controls where the pointer is.
@@ -329,6 +390,7 @@ impl<'a> ControlHost<'a> {
 
     /// Deliver an absolute mouse event to the registered controls.
     pub fn deliver_mouse(&mut self, event: MouseEvent) -> EventResponse {
+        self.pointer = Some(event.pos());
         if self.active_drag.is_none() {
             self.update_hover(event.pos());
         }

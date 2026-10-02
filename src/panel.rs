@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use libmsdf::drawlist::{DrawList, LINE_BOX_RATIO, SdfInstance, SdfKind};
 
 use crate::event::{
-    ControlAction, ControlPart, EventResponse, InputEvent, Key, KeyboardEvent, MouseButton,
-    MouseEvent,
+    ControlAction, ControlPart, EventResponse, GestureEvent, InputEvent, Key, KeyboardEvent,
+    Modifiers, MouseButton, MouseEvent,
 };
 use crate::handle::{ControlHandle, ReadValue};
 use crate::host::{Control, ControlHost, ControlKey, DragGrab, HostedControl};
@@ -479,6 +479,23 @@ impl<S> HostedControl for Panel<'_, S> {
             } => Some(ControlAction::Activated { part: hit_part }),
             _ => None,
         }
+    }
+
+    fn handle_gesture(
+        &self,
+        event: &GestureEvent,
+        _hit_part: ControlPart,
+    ) -> Option<ControlAction> {
+        self.children
+            .borrow_mut()
+            .deliver_event(InputEvent::Gesture(*event))
+            .action
+    }
+
+    fn set_modifiers(&self, modifiers: Modifiers) {
+        self.children
+            .borrow_mut()
+            .deliver_event(InputEvent::Modifiers(modifiers));
     }
 
     fn handle_keyboard(&self, event: &KeyboardEvent) -> Option<ControlAction> {

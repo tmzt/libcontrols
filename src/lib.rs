@@ -25,8 +25,8 @@ pub use arrow_label::{ArrowLabel, ArrowLabelActive, ArrowLabelState};
 pub use button::{Button, ButtonState};
 pub use edit::{Edit, EditState};
 pub use event::{
-    ControlAction, ControlHit, ControlPart, EventResponse, InputEvent, Key, KeyState,
-    KeyboardEvent, MouseButton, MouseEvent,
+    ControlAction, ControlHit, ControlPart, EventResponse, GestureEvent, InputEvent, Key, KeyState,
+    KeyboardEvent, Modifiers, MouseButton, MouseEvent,
 };
 pub use handle::{ControlHandle, ReadValue};
 pub use host::{Control, ControlHost, ControlHostBuilder, ControlKey, DragGrab, HostedControl};

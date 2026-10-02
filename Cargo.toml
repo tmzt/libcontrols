@@ -1,6 +1,6 @@
 [package]
 name = "libcontrols"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 description = "Immediate-mode UI controls (labels, buttons, sliders, radios, option grids, panels) drawn as MSDF primitives"

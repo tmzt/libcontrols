@@ -22,6 +22,8 @@ pub enum MouseEvent {
     Click { pos: [f32; 2], button: MouseButton },
     /// Mouse wheel scroll at absolute position `[x, y]` with `[dx, dy]` scroll deltas.
     Scroll { pos: [f32; 2], delta: [f32; 2] },
+    /// Pixel-precise scroll (a trackpad) at `[x, y]` with `[dx, dy]` in pixels.
+    ScrollPixels { pos: [f32; 2], delta: [f32; 2] },
     /// Drag motion from `start_pos` to `current_pos` with step `delta`.
     Drag {
         start_pos: [f32; 2],
@@ -41,6 +43,7 @@ impl MouseEvent {
             Self::Up { pos, .. } => pos,
             Self::Click { pos, .. } => pos,
             Self::Scroll { pos, .. } => pos,
+            Self::ScrollPixels { pos, .. } => pos,
             Self::Drag { current_pos, .. } => current_pos,
         }
     }
@@ -53,7 +56,7 @@ impl MouseEvent {
             | Self::Up { button, .. }
             | Self::Click { button, .. }
             | Self::Drag { button, .. } => Some(button),
-            Self::Move { .. } | Self::Scroll { .. } => None,
+            Self::Move { .. } | Self::Scroll { .. } | Self::ScrollPixels { .. } => None,
         }
     }
 }
@@ -122,11 +125,35 @@ impl KeyboardEvent {
     }
 }
 
-/// Unified input event wrapping either mouse or keyboard input.
+/// Touch or trackpad gesture, routed to the control under the last known pointer.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum GestureEvent {
+    /// Pinch by `delta`, where positive magnifies.
+    Pinch { delta: f32 },
+    /// Two-finger double tap.
+    DoubleTap,
+    /// Rotation by `delta` radians.
+    Rotate { delta: f32 },
+}
+
+/// Modifier keys held.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Modifiers {
+    pub shift: bool,
+    pub alt: bool,
+    pub ctrl: bool,
+    pub meta: bool,
+}
+
+/// Unified input event wrapping mouse, keyboard, gesture or modifier input.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum InputEvent {
     Mouse(MouseEvent),
     Keyboard(KeyboardEvent),
+    /// A gesture, which carries no position of its own.
+    Gesture(GestureEvent),
+    /// The modifier keys now held.
+    Modifiers(Modifiers),
 }
 
 /// Sub-component part of a control.
