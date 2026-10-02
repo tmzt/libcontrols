@@ -1,0 +1,10 @@
+[package]
+name = "libcontrols"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Immediate-mode UI controls (labels, buttons, sliders, radios, option grids, panels) drawn as MSDF primitives"
+repository = "https://github.com/tmzt/libcontrols"
+
+[dependencies]
+libmsdf = { git = "https://github.com/tmzt/libmsdf", rev = "69e6c5c5dd5211bc57e48e7d08ae6d370f209c6b" }
