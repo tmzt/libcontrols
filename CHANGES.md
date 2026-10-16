@@ -91,3 +91,25 @@ Plans: [Input routing and filters](docs/design/20261016_02_INPUT_ROUTING_AND_FIL
 - Deferred to a future "focus manager: nested containers" plan: symbol
   paths through nested hosts, Tab order across nesting, `Panel`'s hover
   defects and child tooltips in the first pass.
+
+## 2026-10-16 01:37 EDT — 0.3.0: implementation on a branch, one squash commit, the tag
+
+Plans: [Input routing and filters](docs/design/20261016_02_INPUT_ROUTING_AND_FILTERS_PLAN.md)
+and [Modal stack](docs/design/20261016_03_MODAL_STACK_PLAN.md), both frozen.
+Small departures in how the steps landed, made on the owner's instruction
+("if we need commits per step use a branch and squash merge when finished
+(merge the commit messages in that step)"; "we don't want a broken public
+API"):
+
+- Every step of both plans was one commit on the branch `impl/0.3.0`
+  (`1714da2` to `400328f`), each passing fmt, clippy and tests. `main`
+  received them as one squash commit, `8c34296`, whose message merges the
+  fourteen step messages. On `main` the plans therefore land in a single
+  commit rather than one per step.
+- Modal stack plan, step 6 and section 14: the version bump and the
+  `VERSIONS.md` entry were committed in step 6 on the branch and reached
+  `main` in `8c34296`; the tag `v0.3.0` is on `8c34296`, not on the
+  branch commit, so it marks a commit on `main` (AGENTS.md Rule 5.1).
+- The `VERSIONS.md` heading for 0.3.0 names the tag but no short commit
+  (Rule 5.2): the entry is written in the version commit (Rule 5.3), and a
+  commit cannot contain its own hash. The entry says so.
