@@ -1,7 +1,7 @@
 ---
 title: Persistent control tree and router layers
 date: 2026-10-16
-status: In implementation
+status: Implemented
 covers: >
   libcontrols moves from hosts rebuilt per event to a persistent Router that
   owns its controls in a tree and only draws per frame. Focus, hover and the
@@ -995,3 +995,24 @@ review by a subagent. Implementation begins with step 1 on the branch
 `impl/0.4.0-router`, squash-merged into `main` when the plan is complete.
 From this amendment on the document is immutable; departures are recorded
 in `CHANGES.md` (AGENTS.md, Rule 1.7).
+
+## Amendment — 2026-10-16 04:10 EDT: implemented
+
+Status changes from `In implementation` to `Implemented`. Every step is
+done and its **Done when:** holds (`cargo fmt`, `cargo clippy` with no
+warnings and `cargo test` pass; 306 tests, including two rounds of
+adversarial tests). The steps were commits on the branch
+`impl/0.4.0-router`, all reaching `main` in the squash commit
+`5567fa7` (departures: `CHANGES.md`, 2026-10-16 04:10 EDT addendum):
+
+- Step 1 (the tree and its flags): branch commit `c15d83e`.
+- Steps 2 and 3 (routing, the filter chain; focus, Tab order, hover,
+  state): branch commit `6c10e87`.
+- Step 4 (a router is a layer): branch commit `9568011`.
+- Step 5 (`Panel` without a host): branch commit `64b708e`.
+- Steps 6 and 7 (modals; `ControlHost` and `ControlKey` removed): branch
+  commit `a00313d`.
+- Step 8 (README and version): branch commit `6712a2f`; the version is
+  unchanged until the libmsdf 0.3.0 move (section 11).
+- Adversarial reviews and their fixes: branch commits `a998e8c` and
+  `cb25e46`.
