@@ -1,7 +1,7 @@
 ---
 title: Modals and input filters
 date: 2026-10-16
-status: Draft
+status: "Superseded (by [Input routing and filters](20261016_02_INPUT_ROUTING_AND_FILTERS_PLAN.md) and [Modal stack](20261016_03_MODAL_STACK_PLAN.md))"
 covers: >
   An input filter stack for ControlHost (a defaulted HostedControl::intercept
   asked last-added control first, so any hosted control can capture an
@@ -1038,3 +1038,77 @@ asserts with messages saying what must hold.
    after the panel. With `draw_controls` and `draw_control_overlays` from
    step 1 the fix is two lines. Add it as a step here, or a separate change?
 4. **A `TabView` container.** Wanted as its own plan (section 12)?
+
+## Amendment — 2026-10-16 00:58 EDT: superseded by "Input routing and filters" and "Modal stack"
+
+Status changes from `Draft` to `Superseded (by [Input routing and
+filters](20261016_02_INPUT_ROUTING_AND_FILTERS_PLAN.md) and [Modal
+stack](20261016_03_MODAL_STACK_PLAN.md))`. Nothing in this plan was
+implemented. The owner rejected the filter design of section 4 (a defaulted
+`HostedControl::intercept` asked of every control on every event, in a GPU
+render loop) and asked to "rethink and ... write a clean plan, split into
+filters and modal, supercede the current one". The two new plans together
+replace this one; the filters plan is the dependency of the modal plan and
+both ship as 0.3.0.
+
+What moved where:
+
+- Section 1 (purpose) and section 2 (constraints): split between the two
+  plans' sections 1 and 2, re-read at `d193afd`, with the per-event cost of
+  the current routing (hover walk, modifier broadcast, string resolves)
+  added to plan 02.
+- Section 3 (concepts): plan 03, section 3, unchanged except that "capture"
+  becomes the filter's redirect.
+- Section 4 (input filters): **replaced** by plan 02, section 9. The filter
+  is a separate trait, `InputFilter`, on app-owned objects registered with
+  `ControlHostBuilder::with_filter`; answers are `Filtered::{Pass,
+  Consumed(action), Redirect(key)}`; the context is `FilterContext`.
+  `ControlHost::draw_controls` and `draw_control_overlays` (4.1) move to
+  plan 03, section 11.2; `clear_hover` becomes one call on the hovered
+  control in plan 02, 8.2.
+- Section 5 (`Key::Back`): plan 02, section 5; its modal part (5.4) in plan
+  03, section 12. The release is still 0.3.0, now also for the other
+  breaking changes plan 02 makes (symbols, `EventContext`, no
+  `set_modifiers`).
+- Section 6 (modal types), 8 (input inside the top modal) and 9 (drawing):
+  plan 03, sections 4 to 8, 10 and 11, with `String` ids replaced by
+  `Symbol`, so `DismissReason`, `ModalEvent`, `ModalEntryView` and
+  `ModalView` are `Copy`; `ModalEntry` gains `hover`; `Modal::deliver_event`
+  takes the modifiers.
+- Section 7 (`ModalStack`): plan 03, sections 6 and 9. The stack no longer
+  captures through `intercept`; a separate `ModalFilter`
+  (`ModalState::filter(target)`) redirects every event to the stack by
+  name while any modal exists, and the stack is an ordinary hosted control
+  with `hit_test` always `None` and `accepts_focus` false.
+- Section 11 (Noble's Keep usage): plan 03, section 13, rewritten for
+  `ModalFilter`, `ModalStack` and `sym!`.
+- Section 13 (compatibility): plan 02, section 11 and plan 03, section 14,
+  which also holds the `VERSIONS.md` entry and says the version is cut once,
+  in plan 03's last step.
+- Section 14 (steps): plan 02, section 14 (symbols, `Key::Back`,
+  `EventContext`, focus events, hover, filters, docs) and plan 03, section
+  15 (state, filter, modal, input, stack, docs and 0.3.0).
+- Section 15 (decisions carried): plan 03, section 16.
+- Section 16 (open questions): question 2 (focus changes need their own
+  hook) is answered by plan 02, section 7 (`FocusEvent`,
+  `HostedControl::handle_focus`); question 3 (panel child overlays) and
+  question 1 (traversal default) go to the future "focus manager: nested
+  containers" plan named in plan 02, section 12; question 4 (`TabView`)
+  stays deferred.
+
+What was dropped:
+
+- `HostedControl::intercept` and `Intercept` (asking every control on every
+  event).
+- `InterceptContext` (per-control `focused`, `hit`, `dragging`,
+  `drag_elsewhere` flags); `FilterContext` carries only the host's pointer,
+  modifiers, focused key and grab.
+- `ModalStack` as a filter (section 7's `intercept` arm) and its
+  `set_modifiers` forwarding; "a control is never registered as a filter
+  itself".
+- `Panel` hover capture through `intercept` (10.1) and `Panel` focus
+  traversal through `intercept` (10.2, `with_focus_traversal`); `Panel`'s
+  hover defects and Tab order go to the nested-containers plan.
+- Section 12's `TabView` sketch built on `intercept`.
+- `HostedControl::set_modifiers` and the modifier broadcast, which plan 02
+  removes outright rather than routing through a capturer.
