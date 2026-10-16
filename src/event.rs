@@ -1,5 +1,8 @@
 //! Input event primitives, hit testing results, and control response actions.
 
+use crate::host::ControlKey;
+use crate::symbol::Symbol;
+
 /// Mouse button enumeration.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum MouseButton {
@@ -63,6 +66,7 @@ impl MouseEvent {
 
 /// Virtual keyboard key enumeration.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Key {
     Left,
     Right,
@@ -72,6 +76,8 @@ pub enum Key {
     BackTab,
     Enter,
     Escape,
+    /// The platform back action (Android Back, a browser's back).
+    Back,
     Space,
     Home,
     End,
@@ -157,9 +163,10 @@ pub enum InputEvent {
 }
 
 /// Sub-component part of a control.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum ControlPart {
     /// Main body or whole control.
+    #[default]
     Body,
     /// Leading descriptor label.
     Label,
@@ -177,6 +184,65 @@ pub enum ControlPart {
     NumericBox,
     /// Custom sub-part identifier.
     Custom(u32),
+}
+
+/// What the host knows about an event when it hands it to a control.
+///
+/// Outside this crate, build one with [`EventContext::new`] and the `with_*`
+/// methods, or start from `EventContext::default()` and assign fields.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct EventContext {
+    /// The part of the control the event is for. Body for keys.
+    pub part: ControlPart,
+    /// The modifier keys held at this event. A Shift pressed mid-drag shows
+    /// here on the next Drag.
+    pub modifiers: Modifiers,
+    /// The modifiers held at the press that started the grab this control
+    /// holds; None when this control holds no grab.
+    pub press_modifiers: Option<Modifiers>,
+}
+
+impl EventContext {
+    /// A context for `part`, with no modifiers held and no grab.
+    #[must_use]
+    pub fn new(part: ControlPart) -> Self {
+        Self {
+            part,
+            ..Self::default()
+        }
+    }
+
+    /// The same context for another part, for controls made of controls.
+    #[must_use]
+    pub fn with_part(mut self, part: ControlPart) -> Self {
+        self.part = part;
+        self
+    }
+
+    /// The same context with these modifiers held.
+    #[must_use]
+    pub fn with_modifiers(mut self, modifiers: Modifiers) -> Self {
+        self.modifiers = modifiers;
+        self
+    }
+
+    /// The same context with these modifiers held at the grab's press.
+    #[must_use]
+    pub fn with_press_modifiers(mut self, press: Option<Modifiers>) -> Self {
+        self.press_modifiers = press;
+        self
+    }
+}
+
+/// The host's focus arrived at this control or left it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum FocusEvent {
+    /// The control now has the focus.
+    Gained,
+    /// The control no longer has the focus.
+    Lost,
 }
 
 /// Detailed result of a hit test against a control.
@@ -216,6 +282,34 @@ pub enum ControlAction {
     Custom(String),
 }
 
+/// A filter's answer for one event.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum Filtered {
+    /// Not mine: ask the next filter down, then route as usual.
+    Pass,
+    /// Spent: no control sees it. The action, if any, is returned to the app.
+    Consumed(Option<ControlAction>),
+    /// Deliver it to this control alone, through its normal handlers.
+    Redirect(ControlKey),
+}
+
+/// What the host knows when it asks a filter. Nothing per control.
+///
+/// Outside this crate, start from `FilterContext::default()` and assign fields.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
+pub struct FilterContext {
+    /// The pointer, after recording this event.
+    pub pointer: Option<[f32; 2]>,
+    /// The modifiers held, after recording this event.
+    pub modifiers: Modifiers,
+    /// The focused control, if any.
+    pub focused: Option<ControlKey>,
+    /// The control holding the grab, if any.
+    pub grab: Option<ControlKey>,
+}
+
 /// Overall outcome returned by `ControlHost` upon delivering an event.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EventResponse {
@@ -224,7 +318,7 @@ pub struct EventResponse {
     /// Index of the targeted control in the host, if any.
     pub target_index: Option<usize>,
     /// Optional identifier name of the targeted control.
-    pub target_id: Option<String>,
+    pub target_id: Option<Symbol>,
     /// Targeted sub-component part.
     pub target_part: Option<ControlPart>,
     /// Action emitted by the control.
@@ -247,11 +341,24 @@ impl EventResponse {
         }
     }
 
+    /// Handled, naming no control: a filter spent the event.
+    #[inline]
+    pub fn consumed(action: Option<ControlAction>, focused_index: Option<usize>) -> Self {
+        Self {
+            handled: true,
+            target_index: None,
+            target_id: None,
+            target_part: None,
+            action,
+            focused_index,
+        }
+    }
+
     /// Create a handled response.
     #[inline]
     pub fn handled(
         target_index: usize,
-        target_id: Option<String>,
+        target_id: Option<Symbol>,
         target_part: ControlPart,
         action: Option<ControlAction>,
         focused_index: Option<usize>,

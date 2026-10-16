@@ -1,7 +1,7 @@
 ---
 title: Modal stack
 date: 2026-10-16
-status: Draft
+status: In implementation
 covers: >
   A modal stack for libcontrols built on the input routing of plan
   20261016_02: a persistent ModalState (a stack of up to four modals with
@@ -989,3 +989,13 @@ what must hold.
 5. **Backdrop compounding.** Four levels at 0.45 alpha each leave 9% of the
    tabletop visible. Keep compounding (each level is independent), or let
    an app ask for one backdrop under the top only?
+
+## Amendment — 2026-10-16 01:27 EDT: implementation started
+
+Status changes from `Draft` to `In implementation`. The owner approved
+this plan as written ("approve and commit both") and asked for the work to
+start. Plan 02 (`20261016_02_INPUT_ROUTING_AND_FILTERS_PLAN.md`) is
+complete through its step 8 on the branch `impl/0.3.0`; this plan's step 1
+follows on the same branch, which is squash-merged into `main` once both
+plans are complete. From this amendment on the document is immutable;
+departures are recorded in `CHANGES.md` (AGENTS.md, Rule 1.7).

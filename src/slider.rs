@@ -279,7 +279,9 @@ impl DrawControl for Slider {
     }
 }
 
-use crate::event::{ControlAction, ControlPart, Key, KeyboardEvent, MouseButton, MouseEvent};
+use crate::event::{
+    ControlAction, ControlPart, EventContext, Key, KeyboardEvent, MouseButton, MouseEvent,
+};
 use crate::host::HostedControl;
 
 impl HostedControl for Slider {
@@ -300,7 +302,7 @@ impl HostedControl for Slider {
         }
     }
 
-    fn handle_mouse(&self, event: &MouseEvent, _hit_part: ControlPart) -> Option<ControlAction> {
+    fn handle_mouse(&self, event: &MouseEvent, _ctx: &EventContext) -> Option<ControlAction> {
         match *event {
             MouseEvent::Down {
                 pos,
@@ -347,7 +349,7 @@ impl HostedControl for Slider {
         }
     }
 
-    fn handle_keyboard(&self, event: &KeyboardEvent) -> Option<ControlAction> {
+    fn handle_keyboard(&self, event: &KeyboardEvent, _ctx: &EventContext) -> Option<ControlAction> {
         if !event.is_down() {
             return None;
         }

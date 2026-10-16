@@ -9,6 +9,7 @@ pub mod event;
 pub mod handle;
 pub mod host;
 pub mod label;
+pub mod modal;
 pub mod options;
 pub mod panel;
 pub mod radio;
@@ -17,6 +18,7 @@ pub mod ring;
 pub mod selectable_label;
 pub mod slider;
 pub mod slider_numeric;
+pub mod symbol;
 pub mod theme;
 pub mod tooltip;
 pub mod traits;
@@ -25,12 +27,20 @@ pub use arrow_label::{ArrowLabel, ArrowLabelActive, ArrowLabelState};
 pub use button::{Button, ButtonState};
 pub use edit::{Edit, EditState};
 pub use event::{
-    ControlAction, ControlHit, ControlPart, EventResponse, GestureEvent, InputEvent, Key, KeyState,
-    KeyboardEvent, Modifiers, MouseButton, MouseEvent,
+    ControlAction, ControlHit, ControlPart, EventContext, EventResponse, FilterContext, Filtered,
+    FocusEvent, GestureEvent, InputEvent, Key, KeyState, KeyboardEvent, Modifiers, MouseButton,
+    MouseEvent,
 };
 pub use handle::{ControlHandle, ReadValue};
-pub use host::{Control, ControlHost, ControlHostBuilder, ControlKey, DragGrab, HostedControl};
+pub use host::{
+    Control, ControlHost, ControlHostBuilder, ControlKey, DragGrab, HostedControl, InputFilter,
+};
 pub use label::{Label, LabelState};
+pub use modal::{
+    Backdrop, ContentReveal, DismissOn, DismissReason, MAX_MODAL_DEPTH, Modal, ModalEntryView,
+    ModalEvent, ModalFilter, ModalFrame, ModalPhase, ModalStack, ModalState, ModalTransition,
+    ModalView, PanelFrame,
+};
 pub use options::{DEFAULT_PER_ROW, DEFAULT_ROW_GAP, MAX_OPTIONS, Options, OptionsState};
 pub use panel::{Panel, PanelData, PanelState};
 pub use radio::{DEFAULT_CELL_GAP, DEFAULT_CELL_WIDTH, NO_CELL, Radio, RadioState};
@@ -39,6 +49,7 @@ pub use ring::{GlowRingStyle, draw_glowing_ring};
 pub use selectable_label::{SelectableLabel, SelectableLabelState};
 pub use slider::{Slider, SliderState, ThumbStyle};
 pub use slider_numeric::{NumericFormat, SliderNumeric, SliderNumericActive, SliderNumericState};
+pub use symbol::Symbol;
 pub use theme::ControlTheme;
 pub use tooltip::{LABEL_SEPARATOR, TooltipStyle, draw_tooltip, split_label};
 pub use traits::{DrawContext, DrawControl};
@@ -623,11 +634,11 @@ mod tests {
     fn a_drag_grab_naming_a_control_that_is_gone_is_dropped() {
         let only = Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 0.0, 200.0, 20.0));
         let mut host = ControlHost::builder().with_control(only.handle()).build();
-        host.set_active_drag(Some(DragGrab {
-            key: ControlKey::at(7),
-            start_pos: [0.0, 0.0],
-            button: MouseButton::Left,
-        }));
+        host.set_active_drag(Some(DragGrab::new(
+            ControlKey::at(7),
+            [0.0, 0.0],
+            MouseButton::Left,
+        )));
         assert!(host.active_drag().is_none(), "a grab on nothing is no grab");
     }
 
@@ -697,11 +708,11 @@ mod tests {
             "and the slider standing where it was must not have moved",
         );
 
-        next.set_active_drag(Some(DragGrab {
-            key: ControlKey::at(1),
-            start_pos: [20.0, 10.0],
-            button: MouseButton::Left,
-        }));
+        next.set_active_drag(Some(DragGrab::new(
+            ControlKey::at(1),
+            [20.0, 10.0],
+            MouseButton::Left,
+        )));
         next.deliver_mouse(MouseEvent::Move { pos: [190.0, 10.0] });
         assert!(leg.value() > 0.8, "which is what a place does");
     }

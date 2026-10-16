@@ -5,7 +5,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 use libmsdf::drawlist::{DrawList, LINE_BOX_RATIO, SdfInstance, SdfKind};
 
-use crate::event::{ControlAction, ControlPart, Key, KeyboardEvent, MouseButton, MouseEvent};
+use crate::event::{
+    ControlAction, ControlPart, EventContext, Key, KeyboardEvent, MouseButton, MouseEvent,
+};
 use crate::handle::{ControlHandle, ReadValue};
 use crate::host::HostedControl;
 use crate::radio::{DEFAULT_CELL_GAP, DEFAULT_CELL_WIDTH, NO_CELL};
@@ -573,7 +575,8 @@ impl HostedControl for Options {
         ))
     }
 
-    fn handle_mouse(&self, event: &MouseEvent, hit_part: ControlPart) -> Option<ControlAction> {
+    fn handle_mouse(&self, event: &MouseEvent, ctx: &EventContext) -> Option<ControlAction> {
+        let hit_part = ctx.part;
         match event {
             MouseEvent::Click {
                 button: MouseButton::Left,
@@ -594,7 +597,7 @@ impl HostedControl for Options {
         }
     }
 
-    fn handle_keyboard(&self, event: &KeyboardEvent) -> Option<ControlAction> {
+    fn handle_keyboard(&self, event: &KeyboardEvent, _ctx: &EventContext) -> Option<ControlAction> {
         if !event.is_down() || self.is_empty() {
             return None;
         }

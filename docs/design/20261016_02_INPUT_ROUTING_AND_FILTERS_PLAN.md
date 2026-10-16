@@ -1,7 +1,7 @@
 ---
 title: Input routing and filters
 date: 2026-10-16
-status: Draft
+status: In implementation
 covers: >
   How a ControlHost routes input in 0.3.0. A filter stack that sees every
   event first (InputFilter, Filtered::{Pass, Consumed, Redirect}, registered
@@ -953,3 +953,13 @@ style of `tests/events.rs`: a `Recorder` control logging every
 5. **`Edit` on `FocusEvent::Lost`.** `Edit` has no caret or commit today.
    When it grows editing, is commit-on-blur the right default given that a
    per-build app can lose the `Lost` (7.1)?
+
+## Amendment — 2026-10-16 01:15 EDT: implementation started
+
+Status changes from `Draft` to `In implementation`. The owner approved
+this plan as written ("approve and commit both") and asked for the work to
+start. Implementation begins with step 1 on the branch `impl/0.3.0`, which
+is squash-merged into `main` once this plan and
+`20261016_03_MODAL_STACK_PLAN.md` are both complete. From this amendment on
+the document is immutable; departures are recorded in `CHANGES.md`
+(AGENTS.md, Rule 1.7).

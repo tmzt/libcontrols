@@ -1,10 +1,11 @@
 //! Gesture, modifier and pixel-scroll events, and controls written before them.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 
 use libcontrols::{
-    ControlAction, ControlHandle, ControlHost, ControlPart, DrawContext, DrawControl, GestureEvent,
-    HostedControl, InputEvent, KeyboardEvent, Modifiers, MouseButton, MouseEvent, Rect, Slider,
+    ControlAction, ControlHandle, ControlHost, ControlPart, DrawContext, DrawControl, EventContext,
+    FocusEvent, GestureEvent, HostedControl, InputEvent, Key, KeyboardEvent, Modifiers,
+    MouseButton, MouseEvent, Rect, Slider,
 };
 use libmsdf::drawlist::DrawList;
 
@@ -29,12 +30,17 @@ impl HostedControl for Legacy {
             .then(|| (ControlPart::Body, self.rect.normalized_x(pos[0])))
     }
 
-    fn handle_mouse(&self, event: &MouseEvent, part: ControlPart) -> Option<ControlAction> {
+    fn handle_mouse(&self, event: &MouseEvent, ctx: &EventContext) -> Option<ControlAction> {
         self.seen.borrow_mut().push(*event);
-        matches!(event, MouseEvent::Down { .. }).then_some(ControlAction::Activated { part })
+        matches!(event, MouseEvent::Down { .. })
+            .then_some(ControlAction::Activated { part: ctx.part })
     }
 
-    fn handle_keyboard(&self, _event: &KeyboardEvent) -> Option<ControlAction> {
+    fn handle_keyboard(
+        &self,
+        _event: &KeyboardEvent,
+        _ctx: &EventContext,
+    ) -> Option<ControlAction> {
         None
     }
 }
@@ -43,7 +49,7 @@ impl HostedControl for Legacy {
 struct Recorder {
     rect: Rect,
     gestures: RefCell<Vec<GestureEvent>>,
-    modifiers: Cell<Modifiers>,
+    focus: RefCell<Vec<FocusEvent>>,
 }
 
 impl DrawControl for Recorder {
@@ -59,21 +65,25 @@ impl HostedControl for Recorder {
         self.rect.contains(pos).then_some((ControlPart::Body, 0.0))
     }
 
-    fn handle_mouse(&self, _event: &MouseEvent, _part: ControlPart) -> Option<ControlAction> {
+    fn handle_mouse(&self, _event: &MouseEvent, _ctx: &EventContext) -> Option<ControlAction> {
         None
     }
 
-    fn handle_keyboard(&self, _event: &KeyboardEvent) -> Option<ControlAction> {
+    fn handle_keyboard(
+        &self,
+        _event: &KeyboardEvent,
+        _ctx: &EventContext,
+    ) -> Option<ControlAction> {
         None
     }
 
-    fn handle_gesture(&self, event: &GestureEvent, _part: ControlPart) -> Option<ControlAction> {
+    fn handle_gesture(&self, event: &GestureEvent, _ctx: &EventContext) -> Option<ControlAction> {
         self.gestures.borrow_mut().push(*event);
         Some(ControlAction::Custom("gesture".into()))
     }
 
-    fn set_modifiers(&self, modifiers: Modifiers) {
-        self.modifiers.set(modifiers);
+    fn handle_focus(&self, event: FocusEvent) {
+        self.focus.borrow_mut().push(event);
     }
 }
 
@@ -81,7 +91,7 @@ fn recorder(x: f32) -> Recorder {
     Recorder {
         rect: Rect::new(x, 0.0, 100.0, 100.0),
         gestures: RefCell::new(Vec::new()),
-        modifiers: Cell::new(Modifiers::default()),
+        focus: RefCell::new(Vec::new()),
     }
 }
 
@@ -168,7 +178,7 @@ fn a_gesture_goes_to_the_control_under_the_last_pointer() {
 }
 
 #[test]
-fn modifiers_are_recorded_and_told_to_every_control() {
+fn modifiers_are_recorded_and_told_to_no_control() {
     let a = recorder(0.0);
     let b = recorder(200.0);
     let mut host = ControlHost::builder()
@@ -180,10 +190,12 @@ fn modifiers_are_recorded_and_told_to_every_control() {
         meta: true,
         ..Modifiers::default()
     };
-    host.deliver_event(InputEvent::Modifiers(held));
+    let resp = host.deliver_event(InputEvent::Modifiers(held));
     assert_eq!(host.modifiers(), held);
-    assert_eq!(a.modifiers.get(), held);
-    assert_eq!(b.modifiers.get(), held);
+    assert!(!resp.handled, "no control is told of a modifier change");
+    for r in [&a, &b] {
+        assert!(r.gestures.borrow().is_empty() && r.focus.borrow().is_empty());
+    }
 }
 
 #[test]
@@ -194,4 +206,70 @@ fn pixel_scroll_has_a_position_and_no_button() {
     };
     assert_eq!(event.pos(), [3.0, 4.0]);
     assert_eq!(event.button(), None);
+}
+
+/// A control that logs the keys it is given.
+struct KeyLog {
+    rect: Rect,
+    keys: RefCell<Vec<KeyboardEvent>>,
+}
+
+impl DrawControl for KeyLog {
+    fn draw(&self, _list: &mut DrawList, _ctx: &DrawContext) {}
+}
+
+impl HostedControl for KeyLog {
+    fn bounds(&self) -> Rect {
+        self.rect
+    }
+
+    fn hit_test(&self, pos: [f32; 2]) -> Option<(ControlPart, f32)> {
+        self.rect.contains(pos).then_some((ControlPart::Body, 0.0))
+    }
+
+    fn handle_mouse(&self, _event: &MouseEvent, _ctx: &EventContext) -> Option<ControlAction> {
+        None
+    }
+
+    fn handle_keyboard(&self, event: &KeyboardEvent, _ctx: &EventContext) -> Option<ControlAction> {
+        self.keys.borrow_mut().push(*event);
+        None
+    }
+}
+
+fn key_log() -> KeyLog {
+    KeyLog {
+        rect: Rect::new(0.0, 0.0, 100.0, 100.0),
+        keys: RefCell::new(Vec::new()),
+    }
+}
+
+#[test]
+fn back_goes_to_the_focused_control_and_keeps_focus() {
+    let log = key_log();
+    let mut host = ControlHost::builder()
+        .with_control(ControlHandle::new(&log))
+        .with_initial_focus(0)
+        .build();
+    let back = KeyboardEvent::KeyDown { key: Key::Back };
+    let resp = host.deliver_keyboard(back);
+    assert_eq!(resp.target_index, Some(0), "Back is an ordinary key");
+    assert_eq!(log.keys.borrow().as_slice(), &[back]);
+    assert_eq!(
+        host.focused_index(),
+        Some(0),
+        "Back must not clear the focus"
+    );
+}
+
+#[test]
+fn escape_still_clears_focus() {
+    let log = key_log();
+    let mut host = ControlHost::builder()
+        .with_control(ControlHandle::new(&log))
+        .with_initial_focus(0)
+        .build();
+    host.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Escape });
+    assert_eq!(host.focused_index(), None, "Escape clears the focus");
+    assert!(log.keys.borrow().is_empty(), "and reaches no control");
 }

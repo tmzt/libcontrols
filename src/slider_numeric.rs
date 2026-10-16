@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use libmsdf::drawlist::DrawList;
 
 use crate::edit::{Edit, EditState};
-use crate::event::{ControlAction, ControlPart, KeyboardEvent, MouseEvent};
+use crate::event::{ControlAction, ControlPart, EventContext, KeyboardEvent, MouseEvent};
 use crate::handle::{ControlHandle, ReadValue};
 use crate::host::HostedControl;
 use crate::label::Label;
@@ -367,14 +367,15 @@ impl HostedControl for SliderNumeric {
         Some((ControlPart::Body, self.rect.normalized_x(pos[0])))
     }
 
-    fn handle_mouse(&self, event: &MouseEvent, hit_part: ControlPart) -> Option<ControlAction> {
+    fn handle_mouse(&self, event: &MouseEvent, ctx: &EventContext) -> Option<ControlAction> {
+        let hit_part = ctx.part;
         let (lbl_r, slider_r, edit_r) = self.sub_rects();
         match hit_part {
             ControlPart::Label => {
                 if let (Some(lbl), Some(r)) = (&self.label, lbl_r) {
                     let mut l = lbl.clone();
                     l.rect = r;
-                    l.handle_mouse(event, ControlPart::Body)
+                    l.handle_mouse(event, &ctx.with_part(ControlPart::Body))
                 } else {
                     None
                 }
@@ -382,12 +383,12 @@ impl HostedControl for SliderNumeric {
             ControlPart::NumericBox => {
                 let mut e = self.edit.clone();
                 e.rect = edit_r;
-                e.handle_mouse(event, hit_part)
+                e.handle_mouse(event, ctx)
             }
             ControlPart::Track | ControlPart::Thumb | ControlPart::Body => {
                 let mut s = self.slider.clone();
                 s.rect = slider_r;
-                let action = s.handle_mouse(event, hit_part);
+                let action = s.handle_mouse(event, ctx);
                 self.state
                     .edit
                     .set_text(self.format.format_value(self.value()));
@@ -397,8 +398,8 @@ impl HostedControl for SliderNumeric {
         }
     }
 
-    fn handle_keyboard(&self, event: &KeyboardEvent) -> Option<ControlAction> {
-        let action = self.slider.handle_keyboard(event);
+    fn handle_keyboard(&self, event: &KeyboardEvent, ctx: &EventContext) -> Option<ControlAction> {
+        let action = self.slider.handle_keyboard(event, ctx);
         self.state
             .edit
             .set_text(self.format.format_value(self.value()));

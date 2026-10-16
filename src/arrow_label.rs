@@ -5,7 +5,9 @@ use std::sync::Mutex;
 
 use libmsdf::drawlist::{DrawList, LINE_BOX_RATIO, SdfInstance, SdfKind};
 
-use crate::event::{ControlAction, ControlPart, Key, KeyboardEvent, MouseButton, MouseEvent};
+use crate::event::{
+    ControlAction, ControlPart, EventContext, Key, KeyboardEvent, MouseButton, MouseEvent,
+};
 use crate::handle::{ControlHandle, ReadValue};
 use crate::host::HostedControl;
 use crate::rect::Rect;
@@ -321,7 +323,8 @@ impl HostedControl for ArrowLabel {
         }
     }
 
-    fn handle_mouse(&self, event: &MouseEvent, hit_part: ControlPart) -> Option<ControlAction> {
+    fn handle_mouse(&self, event: &MouseEvent, ctx: &EventContext) -> Option<ControlAction> {
+        let hit_part = ctx.part;
         match event {
             MouseEvent::Click {
                 button: MouseButton::Left,
@@ -371,7 +374,7 @@ impl HostedControl for ArrowLabel {
         }
     }
 
-    fn handle_keyboard(&self, event: &KeyboardEvent) -> Option<ControlAction> {
+    fn handle_keyboard(&self, event: &KeyboardEvent, _ctx: &EventContext) -> Option<ControlAction> {
         if event.is_down() {
             match event.key() {
                 Some(Key::Left | Key::Up) => {

@@ -9,13 +9,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use libmsdf::drawlist::{DrawList, LINE_BOX_RATIO, SdfInstance, SdfKind};
 
 use crate::event::{
-    ControlAction, ControlPart, EventResponse, GestureEvent, InputEvent, Key, KeyboardEvent,
-    Modifiers, MouseButton, MouseEvent,
+    ControlAction, ControlPart, EventContext, EventResponse, GestureEvent, InputEvent, Key,
+    KeyboardEvent, MouseButton, MouseEvent,
 };
 use crate::handle::{ControlHandle, ReadValue};
 use crate::host::{Control, ControlHost, ControlKey, DragGrab, HostedControl};
 use crate::rect::Rect;
 use crate::ring::{GlowRingStyle, draw_glowing_ring};
+use crate::symbol::Symbol;
 use crate::traits::{DrawContext, DrawControl};
 
 /// Mutable runtime state for a container panel.
@@ -325,7 +326,7 @@ impl<'a, S> Panel<'a, S> {
     /// Add a named child control to this panel.
     pub fn with_named_control<C: Control + 'a>(
         mut self,
-        id: impl Into<String>,
+        id: impl Into<Symbol>,
         control: ControlHandle<'a, C>,
     ) -> Self {
         self.children.get_mut().add_named_control(id, control);
@@ -368,6 +369,19 @@ impl<'a, S> Panel<'a, S> {
     pub fn with_focus_key(mut self, key: Option<ControlKey>) -> Self {
         self.children.get_mut().set_focused_key(key);
         self
+    }
+
+    /// Put the children's hover back after a rebuild.
+    #[must_use]
+    pub fn with_hovered_key(mut self, key: Option<ControlKey>) -> Self {
+        self.children.get_mut().set_hovered_key(key);
+        self
+    }
+
+    /// The hovered child as a key, to be carried to the next build.
+    #[must_use]
+    pub fn hovered_key(&self) -> Option<ControlKey> {
+        self.children.borrow().hovered_key()
     }
 
     /// The focused control as a key, to be carried to the next build.
@@ -459,11 +473,12 @@ impl<S> HostedControl for Panel<'_, S> {
         }
     }
 
-    fn handle_mouse(&self, event: &MouseEvent, hit_part: ControlPart) -> Option<ControlAction> {
-        let child_response = self
-            .children
-            .borrow_mut()
-            .deliver_event(InputEvent::Mouse(*event));
+    fn handle_mouse(&self, event: &MouseEvent, ctx: &EventContext) -> Option<ControlAction> {
+        let child_response = {
+            let mut children = self.children.borrow_mut();
+            children.set_modifiers(ctx.modifiers);
+            children.deliver_event(InputEvent::Mouse(*event))
+        };
         if child_response.handled {
             return child_response.action;
         }
@@ -476,33 +491,23 @@ impl<S> HostedControl for Panel<'_, S> {
             | MouseEvent::Down {
                 button: MouseButton::Left,
                 ..
-            } => Some(ControlAction::Activated { part: hit_part }),
+            } => Some(ControlAction::Activated { part: ctx.part }),
             _ => None,
         }
     }
 
-    fn handle_gesture(
-        &self,
-        event: &GestureEvent,
-        _hit_part: ControlPart,
-    ) -> Option<ControlAction> {
-        self.children
-            .borrow_mut()
-            .deliver_event(InputEvent::Gesture(*event))
-            .action
+    fn handle_gesture(&self, event: &GestureEvent, ctx: &EventContext) -> Option<ControlAction> {
+        let mut children = self.children.borrow_mut();
+        children.set_modifiers(ctx.modifiers);
+        children.deliver_event(InputEvent::Gesture(*event)).action
     }
 
-    fn set_modifiers(&self, modifiers: Modifiers) {
-        self.children
-            .borrow_mut()
-            .deliver_event(InputEvent::Modifiers(modifiers));
-    }
-
-    fn handle_keyboard(&self, event: &KeyboardEvent) -> Option<ControlAction> {
-        let child_response = self
-            .children
-            .borrow_mut()
-            .deliver_event(InputEvent::Keyboard(*event));
+    fn handle_keyboard(&self, event: &KeyboardEvent, ctx: &EventContext) -> Option<ControlAction> {
+        let child_response = {
+            let mut children = self.children.borrow_mut();
+            children.set_modifiers(ctx.modifiers);
+            children.deliver_event(InputEvent::Keyboard(*event))
+        };
         if child_response.handled {
             return child_response.action;
         }
