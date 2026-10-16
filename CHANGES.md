@@ -28,3 +28,25 @@ Plan: [Modal layer](docs/design/20261015_01_MODAL_PLAN.md), amendment
 - `ModalState` holds a stack of up to four modals instead of one: push,
   pop, replace-top, dismiss-all, per-entry transitions; only the top takes
   input and is dismissed, and lower modals stay drawn under its backdrop.
+
+## 2026-10-16 00:23 EDT — Modals and input filters (supersedes Modal layer)
+
+Plan: [Modals and input filters](docs/design/20261016_01_MODALS_AND_INPUT_FILTERS_PLAN.md)
+(`Draft`), superseding [Modal layer](docs/design/20261015_01_MODAL_PLAN.md).
+
+- Adds an input filter stack: `HostedControl::intercept`, a defaulted method
+  asked last-added control first before normal routing; a control that
+  answers `Capture` receives the event alone. With every control passing,
+  routing is 0.2.0's.
+- Modals are rebuilt on it: a `ModalStack` hosted control, added last,
+  captures every event while its `ModalState` holds any modal, so the base
+  UI is level 0 and gets nothing, modifiers included. The host-level modal
+  API of the old plan is dropped.
+- Answers the old plan's open questions: `Modal::with_hold_open` and
+  `ModalEvent::DismissRefused` veto user dismissals; Escape and Back
+  dismiss even with an `Edit` focused; scrolling is a later plan; the
+  per-instance fade stays in libcontrols.
+- `Panel` uses the filter: hover inside panels follows plain moves (a fix),
+  and opt-in `with_focus_traversal` lets Tab and Escape traverse children.
+- Still breaking (0.3.0) only through `Key::Back` and `#[non_exhaustive]`
+  `Key`.
