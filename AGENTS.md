@@ -118,3 +118,11 @@ Before writing, modifying or deleting code for a new planned work item:
    entry. Earlier entries are never edited.
 3. The `VERSIONS.md` entry is in the same commit as the version change. This
    is an exception to Rule 3.1.
+4. While the version is `0.x`, the bump follows the public API change. A
+   release whose public API changes are not strictly additive bumps the minor
+   version (`0.x.y` to `0.(x+1).0`): anything removed, renamed or changed in
+   signature or type, behaviour a caller can observe changing, or a variant or
+   field added to an exhaustive public enum or struct. A release whose changes
+   are strictly additive, or change no public API, bumps the patch version
+   (`0.x.y` to `0.x.(y+1)`). This applies from 0.3.0 on; earlier versions are
+   not re-labelled.
