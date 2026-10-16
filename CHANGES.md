@@ -113,3 +113,14 @@ API"):
 - The `VERSIONS.md` heading for 0.3.0 names the tag but no short commit
   (Rule 5.2): the entry is written in the version commit (Rule 5.3), and a
   commit cannot contain its own hash. The entry says so.
+
+## 2026-10-16 02:04 EDT — Rule 5.5: recursive version bumps
+
+- Owner's instruction (2026-10-16): "the public API rule needs to be
+  recursive, if back incompat change in dep must bump to 0.x in parent for
+  repos with public surface". AGENTS.md gains Rule 5.5: moving a dependency
+  to a semver-incompatible version bumps this crate's minor version (major
+  from 1.0), and the bump propagates up through every crate with a public
+  API.
+- Consequence: the release that moves libcontrols from libmsdf 0.2 to
+  libmsdf 0.3.0 (filled Bézier paths) is libcontrols 0.4.0.
