@@ -124,3 +124,47 @@ API"):
   API.
 - Consequence: the release that moves libcontrols from libmsdf 0.2 to
   libmsdf 0.3.0 (filled Bézier paths) is libcontrols 0.4.0.
+
+## 2026-10-16 02:14 EDT — Focus manager: nested containers
+
+Plan: [Focus manager: nested containers](docs/design/20261016_04_NESTED_CONTAINERS_PLAN.md)
+(`Draft`), the plan named in section 12 of
+[Input routing and filters](docs/design/20261016_02_INPUT_ROUTING_AND_FILTERS_PLAN.md).
+
+- The top host becomes the only router: a container exposes its child host
+  through `HostedControl::with_children`, and focus, hover and the press
+  grab are addressed as a `ControlPath` (up to four levels, `Copy`), so an
+  event goes straight to the innermost control and no level runs a routing
+  pass of its own.
+- Fixes the `Panel` defects left by plan 02: hover on plain moves inside a
+  panel, hover cleared when the pointer leaves it, Tab into and out of its
+  children, and child tooltips drawn in the overlay pass.
+- Breaking (Rule 5.4): `EventResponse` gains `target_path` and becomes
+  `#[non_exhaustive]`; `Panel`'s handlers stop forwarding. The release is
+  0.4.0, shared with the libmsdf 0.3.0 move if neither has been released.
+
+## 2026-10-16 02:29 EDT — Persistent control tree and router layers (supersedes Focus manager: nested containers)
+
+Plan: [Persistent control tree and router layers](docs/design/20261016_05_PERSISTENT_ROUTER_PLAN.md)
+(`Draft`), superseding [Focus manager: nested containers](docs/design/20261016_04_NESTED_CONTAINERS_PLAN.md).
+
+- Controls become persistent: a `Router` owns them as a tree of
+  `NodeId`s and keeps focus, hover and the grab itself; the app edits the
+  tree when its UI changes and draws every frame. No state is carried
+  between builds and no `Gained` is repeated.
+- `Panel` children are router nodes, so routing, hover and Tab order run
+  across containers with no per-level routing. A `Router` implements the
+  routed-control traits, so a nested router is a layer with its own focus
+  scope.
+- Modals: `Modal` becomes a trait (`ModalDialog` is the built-in dialog), so
+  self-drawn and shaped controls can be pushed; the modal stack has no depth
+  limit, and each layer owns the filter it is asked through, dropped with the
+  layer. Input runs through chains: the global `FilterStack` (app-wide rules
+  such as accelerators), then the modal stack's top layer, then routing.
+- Each node has declared flags (`NodeFlags`: focusable, disabled, hidden,
+  tab-through), changed only through the router so derived state such as
+  the Tab order is invalidated exactly when needed, and router-owned state
+  flags (`NodeState`: focused, focus-within, hovered, hover-within,
+  grabbed) passed to controls in the draw and event contexts.
+- `ControlHost` and `ControlKey` are removed. The release is 0.4.0,
+  shared with the libmsdf 0.3.0 move.
