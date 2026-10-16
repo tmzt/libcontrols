@@ -68,3 +68,9 @@ cargo test
 ## License
 
 MIT License. See LICENSE file for details.
+
+## Architectural decisions
+
+| Document | Date | Status | Decision |
+|---|---|---|---|
+| [Modal layer](docs/design/20261015_01_MODAL_PLAN.md) | 2026-10-15 | Draft | Add a modal stack to `ControlHost` (persistent `ModalState`, app-drawn frames, top-only input and dismissal incl. new `Key::Back`, per-entry transitions; breaking, 0.3.0); draft awaiting the owner's review. |
