@@ -50,3 +50,44 @@ Plan: [Modals and input filters](docs/design/20261016_01_MODALS_AND_INPUT_FILTER
   and opt-in `with_focus_traversal` lets Tab and Escape traverse children.
 - Still breaking (0.3.0) only through `Key::Back` and `#[non_exhaustive]`
   `Key`.
+
+## 2026-10-16 00:58 EDT — Input routing and filters; Modal stack (supersede Modals and input filters)
+
+Plans: [Input routing and filters](docs/design/20261016_02_INPUT_ROUTING_AND_FILTERS_PLAN.md)
+(`Draft`) and [Modal stack](docs/design/20261016_03_MODAL_STACK_PLAN.md)
+(`Draft`, depends on the first), together superseding
+[Modals and input filters](docs/design/20261016_01_MODALS_AND_INPUT_FILTERS_PLAN.md).
+
+- The owner rejected `HostedControl::intercept` (every control asked on
+  every event, inside a GPU render loop) and asked for a clean split into a
+  filters plan and a modal plan. Nothing of the old plan was implemented.
+- Routing contract (plan 02): an app-owned `InputFilter` stack sees every
+  event first and answers `Pass`, `Consumed(action)` or `Redirect(key)`;
+  controls are never asked and are never filters themselves. Pointer events
+  and gestures route by area with a press grab; keys route by focus; Tab,
+  BackTab and Escape belong to the focus manager; `Key::Back` is an
+  ordinary key.
+- Focus changes are events: `FocusEvent::{Gained, Lost}` through
+  `HostedControl::handle_focus`; `accepts_focus` lets a control refuse Tab.
+  Hover is enter and leave: at most two `set_hover` calls per pointer
+  event, with `hovered_key` carried across rebuilds like focus and drag.
+- Modifiers are no longer broadcast: `HostedControl::set_modifiers` is
+  removed and every handler takes an `EventContext { part, modifiers,
+  press_modifiers }`, so modified drags work without a modifier event.
+  Only filters see `InputEvent::Modifiers`.
+- `Symbol` (one process-wide interner, `sym!` interning once per call
+  site) replaces `String` in `ControlKey::Named`, control names,
+  `find_by_id` and `EventResponse::target_id`; tinytrowel's `"speed"` lines
+  compile unchanged.
+- Modals (plan 03): `ModalState` (stack of four, per-entry transition,
+  focus, drag, hover, events via `take_events`), a `ModalFilter` created
+  once from the state that answers `Redirect` to a hosted `ModalStack` by
+  name while any modal exists, per-build `Modal`s with app-drawn frames,
+  backdrops, dismiss rules and a hold-open veto; Escape and Back dismiss
+  the top even with an `Edit` focused. `ControlHost::draw_controls` and
+  `draw_control_overlays` are added there for clipping.
+- **Breaking, 0.3.0**, cut once in plan 03's last step with the
+  `VERSIONS.md` entry and the `v0.3.0` tag; plan 02 bumps nothing.
+- Deferred to a future "focus manager: nested containers" plan: symbol
+  paths through nested hosts, Tab order across nesting, `Panel`'s hover
+  defects and child tooltips in the first pass.
