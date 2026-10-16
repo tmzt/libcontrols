@@ -73,4 +73,5 @@ MIT License. See LICENSE file for details.
 
 | Document | Date | Status | Decision |
 |---|---|---|---|
-| [Modal layer](docs/design/20261015_01_MODAL_PLAN.md) | 2026-10-15 | Draft | Add a modal stack to `ControlHost` (persistent `ModalState`, app-drawn frames, top-only input and dismissal incl. new `Key::Back`, per-entry transitions; breaking, 0.3.0); draft awaiting the owner's review. |
+| [Modal layer](docs/design/20261015_01_MODAL_PLAN.md) | 2026-10-15 | Superseded (by [Modals and input filters](docs/design/20261016_01_MODALS_AND_INPUT_FILTERS_PLAN.md)) | Proposed a modal stack built into `ControlHost`; replaced before implementation by an input filter hook and a `ModalStack` control, which carry its design forward. |
+| [Modals and input filters](docs/design/20261016_01_MODALS_AND_INPUT_FILTERS_PLAN.md) | 2026-10-16 | Draft | Add `HostedControl::intercept` (a filter stack any control can capture through) and build the modal stack on it as a hosted `ModalStack` (full input trap, app-drawn frames, hold-open veto, new `Key::Back`; breaking, 0.3.0), plus Panel hover and focus traversal fixes; draft awaiting the owner's review. |
