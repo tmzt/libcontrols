@@ -1,10 +1,10 @@
 [package]
 name = "libcontrols"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 license = "MIT"
 description = "UI controls (labels, buttons, sliders, radios, option grids, panels, dialogs) drawn as MSDF primitives and owned by a persistent router"
 repository = "https://github.com/tmzt/libcontrols"
 
 [dependencies]
-libmsdf = { git = "https://github.com/tmzt/libmsdf", rev = "69e6c5c5dd5211bc57e48e7d08ae6d370f209c6b" }
+libmsdf = { git = "https://github.com/tmzt/libmsdf", rev = "b375be3d22111a6c0479a8f7f7243ee6add72d8e" }
