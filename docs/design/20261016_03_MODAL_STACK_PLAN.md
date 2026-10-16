@@ -1,7 +1,7 @@
 ---
 title: Modal stack
 date: 2026-10-16
-status: In implementation
+status: Implemented
 covers: >
   A modal stack for libcontrols built on the input routing of plan
   20261016_02: a persistent ModalState (a stack of up to four modals with
@@ -999,3 +999,19 @@ complete through its step 8 on the branch `impl/0.3.0`; this plan's step 1
 follows on the same branch, which is squash-merged into `main` once both
 plans are complete. From this amendment on the document is immutable;
 departures are recorded in `CHANGES.md` (AGENTS.md, Rule 1.7).
+
+## Amendment — 2026-10-16 01:37 EDT: implemented
+
+Status changes from `In implementation` to `Implemented`. Every step is
+done and its **Done when:** holds (`cargo fmt`, `cargo clippy` with no
+warnings and `cargo test` pass at each step; the tinytrowel check passes).
+Each step was one commit on the branch `impl/0.3.0`; all of them reached
+`main` together in the squash commit `8c34296`, tagged `v0.3.0`
+(`CHANGES.md`, 2026-10-16 01:37 EDT addendum):
+
+- Step 1 (ModalState): branch commit `a633dcf`.
+- Step 2 (ModalFilter): branch commit `4bd49cf`.
+- Step 3 (Modal, frames, backdrop, reveal, drawing; split draw passes): branch commit `c954a6f`.
+- Step 4 (input and dismissal inside Modal::deliver_event): branch commit `32a5f66`.
+- Step 5 (ModalStack): branch commit `1120a3c`.
+- Step 6 (README modals section; 0.3.0): branch commit `400328f`.

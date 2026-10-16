@@ -1,7 +1,7 @@
 ---
 title: Input routing and filters
 date: 2026-10-16
-status: In implementation
+status: Implemented
 covers: >
   How a ControlHost routes input in 0.3.0. A filter stack that sees every
   event first (InputFilter, Filtered::{Pass, Consumed, Redirect}, registered
@@ -963,3 +963,21 @@ is squash-merged into `main` once this plan and
 `20261016_03_MODAL_STACK_PLAN.md` are both complete. From this amendment on
 the document is immutable; departures are recorded in `CHANGES.md`
 (AGENTS.md, Rule 1.7).
+
+## Amendment — 2026-10-16 01:37 EDT: implemented
+
+Status changes from `In implementation` to `Implemented`. Every step is
+done and its **Done when:** holds (`cargo fmt`, `cargo clippy` with no
+warnings and `cargo test` pass at each step; the tinytrowel check passes).
+Each step was one commit on the branch `impl/0.3.0`; all of them reached
+`main` together in the squash commit `8c34296`, tagged `v0.3.0`
+(`CHANGES.md`, 2026-10-16 01:37 EDT addendum):
+
+- Step 1 (Symbol and sym!): branch commit `1714da2`.
+- Step 2 (symbols for control names): branch commit `035f066`.
+- Step 3 (Key::Back): branch commit `31059cd`.
+- Step 4 (EventContext on every handler; set_modifiers removed): branch commit `36a2cc6`.
+- Step 5 (focus events and focus stops): branch commit `deca05e`.
+- Step 6 (hover as enter and leave): branch commit `09517b0`.
+- Step 7 (the filter stack): branch commit `8e7bea5`.
+- Step 8 (README input routing section; tinytrowel check): branch commit `8dc9d73`.
