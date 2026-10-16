@@ -1,11 +1,11 @@
-//! Gesture, modifier and pixel-scroll events, and controls written before them.
+//! Gesture, modifier and pixel-scroll events, and controls written before them, in a router.
 
 use std::cell::RefCell;
 
 use libcontrols::{
-    ControlAction, ControlHandle, ControlHost, ControlPart, DrawContext, DrawControl, EventContext,
-    FocusEvent, GestureEvent, HostedControl, InputEvent, Key, KeyboardEvent, Modifiers,
-    MouseButton, MouseEvent, Rect, Slider,
+    ControlAction, ControlPart, DrawContext, DrawControl, EventContext, FocusEvent, GestureEvent,
+    HostedControl, InputEvent, Key, KeyboardEvent, Modifiers, MouseButton, MouseEvent, Rect,
+    Router, Slider,
 };
 use libmsdf::drawlist::DrawList;
 
@@ -101,10 +101,9 @@ fn a_control_written_against_the_old_trait_behaves_the_same() {
         rect: Rect::new(0.0, 0.0, 100.0, 100.0),
         seen: RefCell::new(Vec::new()),
     };
-    let mut host = ControlHost::builder()
-        .with_named_control("legacy", ControlHandle::new(&legacy))
-        .build();
-    let down = host.deliver_mouse(MouseEvent::Down {
+    let mut router = Router::new();
+    let id = router.add_named(None, "legacy", legacy).unwrap();
+    let down = router.deliver_mouse(MouseEvent::Down {
         pos: [10.0, 10.0],
         button: MouseButton::Left,
     });
@@ -115,35 +114,37 @@ fn a_control_written_against_the_old_trait_behaves_the_same() {
             part: ControlPart::Body
         })
     );
-    assert_eq!(host.focused_index(), Some(0));
-    let up = host.deliver_mouse(MouseEvent::Up {
+    assert_eq!(router.focused(), Some(id));
+    let up = router.deliver_mouse(MouseEvent::Up {
         pos: [500.0, 10.0],
         button: MouseButton::Left,
     });
     assert!(up.handled, "the grab still lets go off the control");
 
     // The new events reach it through the defaults and change nothing.
-    let pinch = host.deliver_event(InputEvent::Gesture(GestureEvent::Pinch { delta: 0.2 }));
+    let pinch = router.deliver_event(InputEvent::Gesture(GestureEvent::Pinch { delta: 0.2 }));
     assert_eq!(pinch.action, None);
-    let mods = host.deliver_event(InputEvent::Modifiers(Modifiers {
+    let mods = router.deliver_event(InputEvent::Modifiers(Modifiers {
         shift: true,
         ..Modifiers::default()
     }));
     assert!(!mods.handled);
+    let legacy = router.get::<Legacy>(id).unwrap();
     assert_eq!(legacy.seen.borrow().len(), 2);
 }
 
 #[test]
 fn an_existing_slider_reads_line_scrolls_and_ignores_pixel_ones() {
     let slider = Slider::new(50.0, 0.0, 100.0, Rect::new(0.0, 0.0, 200.0, 20.0));
-    let mut host = ControlHost::builder().with_control(slider.handle()).build();
-    let pixels = host.deliver_mouse(MouseEvent::ScrollPixels {
+    let mut router = Router::new();
+    router.add(None, slider);
+    let pixels = router.deliver_mouse(MouseEvent::ScrollPixels {
         pos: [100.0, 10.0],
         delta: [0.0, 30.0],
     });
     assert!(pixels.handled);
     assert_eq!(pixels.action, None);
-    let lines = host.deliver_mouse(MouseEvent::Scroll {
+    let lines = router.deliver_mouse(MouseEvent::Scroll {
         pos: [100.0, 10.0],
         delta: [0.0, 1.0],
     });
@@ -155,20 +156,21 @@ fn an_existing_slider_reads_line_scrolls_and_ignores_pixel_ones() {
 
 #[test]
 fn a_gesture_goes_to_the_control_under_the_last_pointer() {
-    let left = recorder(0.0);
-    let right = recorder(200.0);
-    let mut host = ControlHost::builder()
-        .with_control(ControlHandle::new(&left))
-        .with_control(ControlHandle::new(&right))
-        .build();
+    let mut router = Router::new();
+    let left = router.add(None, recorder(0.0));
+    let right = router.add(None, recorder(200.0));
 
-    let before = host.deliver_event(InputEvent::Gesture(GestureEvent::DoubleTap));
+    let before = router.deliver_event(InputEvent::Gesture(GestureEvent::DoubleTap));
     assert!(!before.handled, "no pointer yet, so no target");
 
-    host.deliver_mouse(MouseEvent::Move { pos: [250.0, 50.0] });
-    assert_eq!(host.pointer(), Some([250.0, 50.0]));
-    let turn = host.deliver_event(InputEvent::Gesture(GestureEvent::Rotate { delta: 0.5 }));
-    assert_eq!(turn.target_index, Some(1));
+    router.deliver_mouse(MouseEvent::Move { pos: [250.0, 50.0] });
+    assert_eq!(router.pointer(), Some([250.0, 50.0]));
+    let turn = router.deliver_event(InputEvent::Gesture(GestureEvent::Rotate { delta: 0.5 }));
+    assert_eq!(turn.target, Some(right));
+    let (left, right) = (
+        router.get::<Recorder>(left).unwrap(),
+        router.get::<Recorder>(right).unwrap(),
+    );
     assert_eq!(turn.action, Some(ControlAction::Custom("gesture".into())));
     assert!(left.gestures.borrow().is_empty());
     assert_eq!(
@@ -179,21 +181,19 @@ fn a_gesture_goes_to_the_control_under_the_last_pointer() {
 
 #[test]
 fn modifiers_are_recorded_and_told_to_no_control() {
-    let a = recorder(0.0);
-    let b = recorder(200.0);
-    let mut host = ControlHost::builder()
-        .with_control(ControlHandle::new(&a))
-        .with_control(ControlHandle::new(&b))
-        .build();
+    let mut router = Router::new();
+    let a = router.add(None, recorder(0.0));
+    let b = router.add(None, recorder(200.0));
     let held = Modifiers {
         alt: true,
         meta: true,
         ..Modifiers::default()
     };
-    let resp = host.deliver_event(InputEvent::Modifiers(held));
-    assert_eq!(host.modifiers(), held);
+    let resp = router.deliver_event(InputEvent::Modifiers(held));
+    assert_eq!(router.modifiers(), held);
     assert!(!resp.handled, "no control is told of a modifier change");
-    for r in [&a, &b] {
+    for id in [a, b] {
+        let r = router.get::<Recorder>(id).unwrap();
         assert!(r.gestures.borrow().is_empty() && r.focus.borrow().is_empty());
     }
 }
@@ -246,30 +246,24 @@ fn key_log() -> KeyLog {
 
 #[test]
 fn back_goes_to_the_focused_control_and_keeps_focus() {
-    let log = key_log();
-    let mut host = ControlHost::builder()
-        .with_control(ControlHandle::new(&log))
-        .with_initial_focus(0)
-        .build();
+    let mut router = Router::new();
+    let id = router.add(None, key_log());
+    router.set_focus(Some(id));
     let back = KeyboardEvent::KeyDown { key: Key::Back };
-    let resp = host.deliver_keyboard(back);
-    assert_eq!(resp.target_index, Some(0), "Back is an ordinary key");
+    let resp = router.deliver_keyboard(back);
+    assert_eq!(resp.target, Some(id), "Back is an ordinary key");
+    let log = router.get::<KeyLog>(id).unwrap();
     assert_eq!(log.keys.borrow().as_slice(), &[back]);
-    assert_eq!(
-        host.focused_index(),
-        Some(0),
-        "Back must not clear the focus"
-    );
+    assert_eq!(router.focused(), Some(id), "Back must not clear the focus");
 }
 
 #[test]
 fn escape_still_clears_focus() {
-    let log = key_log();
-    let mut host = ControlHost::builder()
-        .with_control(ControlHandle::new(&log))
-        .with_initial_focus(0)
-        .build();
-    host.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Escape });
-    assert_eq!(host.focused_index(), None, "Escape clears the focus");
+    let mut router = Router::new();
+    let id = router.add(None, key_log());
+    router.set_focus(Some(id));
+    router.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Escape });
+    assert_eq!(router.focused(), None, "Escape clears the focus");
+    let log = router.get::<KeyLog>(id).unwrap();
     assert!(log.keys.borrow().is_empty(), "and reaches no control");
 }

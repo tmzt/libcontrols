@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use libmsdf::drawlist::{DrawList, LINE_BOX_RATIO, SdfInstance, SdfKind};
 
 use crate::arrow_label::ArrowLabelActive;
+use crate::flags::NodeState;
 use crate::handle::{ControlHandle, ReadValue};
 use crate::rect::Rect;
 use crate::ring::{GlowRingStyle, draw_glowing_ring};
@@ -346,7 +347,13 @@ impl DrawControl for SelectableLabel<&'static str> {
         ctx.draw_text(list, text, [pen_x, pen_y], font_size, text_col);
 
         let glow_style = self.glow_style.unwrap_or_default();
-        match self.active_part() {
+        let active = match self.active_part() {
+            ArrowLabelActive::None if ctx.state.contains(NodeState::FOCUSED) => {
+                ArrowLabelActive::EntireControl
+            }
+            part => part,
+        };
+        match active {
             ArrowLabelActive::None => {}
             ArrowLabelActive::Value => {
                 draw_glowing_ring(list, center_rect.pad_xy(-2.0, 1.0), &glow_style, &ctx.theme);
@@ -364,10 +371,10 @@ impl DrawControl for SelectableLabel<&'static str> {
     }
 }
 
+use crate::control::HostedControl;
 use crate::event::{
     ControlAction, ControlPart, EventContext, Key, KeyboardEvent, MouseButton, MouseEvent,
 };
-use crate::host::HostedControl;
 
 impl<T: 'static> HostedControl for SelectableLabel<T> {
     fn bounds(&self) -> Rect {

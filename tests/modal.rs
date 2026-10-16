@@ -1,17 +1,24 @@
-//! The modal stack: state, filter, modals and the hosted stack.
+//! The modal stack: state, the layer chain, modals and the installed stack.
+//!
+//! Plan 03's tests, ported to the persistent router (plan 05, section 8):
+//! modals are pushed with `Router::push_modal`, live on the installed
+//! `ModalStack`, and are asked through the stack's top layer filter.
 
 mod common;
 
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use common::{Call, Recorder};
+use libcontrols::router::EventResponse;
 use libcontrols::{
-    Backdrop, Button, ContentReveal, ControlHandle, ControlHost, ControlKey, ControlPart,
-    DismissOn, DismissReason, DrawContext, DrawControl, Edit, FocusEvent, GestureEvent,
-    HostedControl, InputEvent, Key, KeyboardEvent, MAX_MODAL_DEPTH, Modal, ModalEvent, ModalFilter,
-    ModalFrame, ModalPhase, ModalStack, ModalState, ModalTransition, ModalView, Modifiers,
-    MouseButton, MouseEvent, Options, PanelFrame, Rect, Slider, Symbol, TooltipStyle, sym,
+    Backdrop, Button, ContentReveal, ControlAction, ControlPart, DismissOn, DismissReason,
+    DrawContext, DrawControl, Edit, EventContext, FocusEvent, GestureEvent, HostedControl,
+    InputEvent, Key, KeyboardEvent, LayerContext, LayerFilter, LayerShape, Modal, ModalDialog,
+    ModalError, ModalEvent, ModalFrame, ModalLayerFilter, ModalOptions, ModalPhase, ModalStack,
+    ModalState, ModalTransition, ModalView, Modifiers, MouseButton, MouseEvent, NodeId, Options,
+    PanelFrame, Rect, Router, Slider, Symbol, TooltipStyle, sym,
 };
 use libmsdf::drawlist::{DrawList, SdfInstance, SdfKind};
 
@@ -20,12 +27,192 @@ const TIMED: ModalTransition = ModalTransition::Timed {
     close_secs: 0.1,
 };
 
+const VIEWPORT: Rect = Rect::new(0.0, 0.0, 800.0, 600.0);
+const FRAME: Rect = Rect::new(200.0, 150.0, 400.0, 300.0);
+const CONTENT: Rect = Rect::new(220.0, 170.0, 360.0, 260.0);
+const FRAME_COLOR: [f32; 4] = [0.2, 0.3, 0.4, 1.0];
+const BUTTON_BG: [f32; 4] = [0.0, 0.6, 0.0, 1.0];
+const TIP_BG: [f32; 4] = [0.6, 0.0, 0.6, 1.0];
+
 fn timed() -> ModalState {
     ModalState::new().with_transition(TIMED)
 }
 
 fn instant() -> ModalState {
     ModalState::new().with_transition(ModalTransition::Instant)
+}
+
+fn driven() -> ModalState {
+    ModalState::new().with_transition(ModalTransition::Driven)
+}
+
+/// The left half of a rect: a `LayerShape` of the test's own.
+struct LeftHalf(Rect);
+
+impl LayerShape for LeftHalf {
+    fn contains(&self, pos: [f32; 2]) -> bool {
+        self.0.contains(pos) && pos[0] < self.0.x + self.0.w / 2.0
+    }
+}
+
+/// A plain modal: a recorder with options, optionally tappable only on
+/// the left half of its rect.
+struct Sheet {
+    rec: Recorder,
+    options: ModalOptions,
+    left_half_only: bool,
+}
+
+impl Sheet {
+    fn new(rect: Rect) -> Self {
+        Self {
+            rec: Recorder {
+                rect,
+                ..Recorder::at(0.0)
+            },
+            options: ModalOptions::default(),
+            left_half_only: false,
+        }
+    }
+
+    fn with_options(mut self, options: ModalOptions) -> Self {
+        self.options = options;
+        self
+    }
+}
+
+impl DrawControl for Sheet {
+    fn draw(&self, list: &mut DrawList, ctx: &DrawContext) {
+        self.rec.draw(list, ctx);
+    }
+}
+
+impl HostedControl for Sheet {
+    fn bounds(&self) -> Rect {
+        self.rec.bounds()
+    }
+
+    fn hit_test(&self, pos: [f32; 2]) -> Option<(ControlPart, f32)> {
+        self.rec.hit_test(pos)
+    }
+
+    fn handle_mouse(&self, event: &MouseEvent, ctx: &EventContext) -> Option<ControlAction> {
+        self.rec.handle_mouse(event, ctx)
+    }
+
+    fn handle_keyboard(&self, event: &KeyboardEvent, ctx: &EventContext) -> Option<ControlAction> {
+        self.rec.handle_keyboard(event, ctx)
+    }
+
+    fn handle_gesture(&self, event: &GestureEvent, ctx: &EventContext) -> Option<ControlAction> {
+        self.rec.handle_gesture(event, ctx)
+    }
+
+    fn set_hover(&self, hover: Option<ControlPart>) {
+        self.rec.set_hover(hover);
+    }
+
+    fn handle_focus(&self, event: FocusEvent) {
+        self.rec.handle_focus(event);
+    }
+}
+
+impl Modal for Sheet {
+    fn options(&self) -> ModalOptions {
+        self.options
+    }
+
+    fn filter_layer(&self, layer: &LayerContext) -> Box<dyn LayerFilter> {
+        if self.left_half_only {
+            Box::new(ModalLayerFilter::new(
+                LeftHalf(self.rec.rect),
+                layer.clone(),
+            ))
+        } else {
+            Box::new(ModalLayerFilter::new(self.bounds(), layer.clone()))
+        }
+    }
+}
+
+fn sheet() -> Sheet {
+    Sheet::new(FRAME)
+}
+
+/// A root router with a modal stack installed over `VIEWPORT`.
+struct Env {
+    router: Router,
+    stack: NodeId,
+    state: Arc<ModalState>,
+}
+
+fn env(state: ModalState) -> Env {
+    let state = Arc::new(state);
+    let mut router = Router::new();
+    let stack = ModalStack::install(&mut router, Arc::clone(&state), VIEWPORT).unwrap();
+    Env {
+        router,
+        stack,
+        state,
+    }
+}
+
+impl Env {
+    /// Push a plain `Sheet` over `FRAME`.
+    fn push(&mut self, id: impl Into<Symbol>) -> Result<(), ModalError> {
+        self.router.push_modal(id, sheet())
+    }
+
+    fn push_with(
+        &mut self,
+        id: impl Into<Symbol>,
+        transition: ModalTransition,
+    ) -> Result<(), ModalError> {
+        self.router.push_modal_with(id, sheet(), transition)
+    }
+
+    fn replace_top(&mut self, id: impl Into<Symbol>) -> Result<(), ModalError> {
+        self.router.replace_top_modal(id, sheet())
+    }
+
+    fn send(&self, event: InputEvent) -> EventResponse {
+        self.router.deliver_event(event)
+    }
+
+    fn render(&self) -> DrawList {
+        let mut list = DrawList::new();
+        self.router.render(&mut list, &DrawContext::default());
+        list
+    }
+
+    fn modals(&self) -> &ModalStack {
+        self.router.get::<ModalStack>(self.stack).unwrap()
+    }
+
+    /// An app node that is a `Recorder`.
+    fn app(&self, id: NodeId) -> &Recorder {
+        self.router.get::<Recorder>(id).unwrap()
+    }
+
+    /// The recorder of the `Sheet` on layer `id`.
+    fn sheet(&self, id: &str) -> Ref<'_, Recorder> {
+        Ref::map(self.modals().modal::<Sheet>(id).expect("a sheet"), |s| {
+            &s.rec
+        })
+    }
+
+    /// The content router of the `ModalDialog` on layer `id`.
+    fn content<R>(&self, id: &str, read: impl FnOnce(&Router) -> R) -> R {
+        let dialog = self
+            .modals()
+            .modal::<ModalDialog>(id)
+            .expect("a dialog on that layer");
+        read(dialog.content())
+    }
+
+    /// Run `read` on the `Recorder` node `node` of dialog `id`'s content.
+    fn content_rec<R>(&self, id: &str, node: NodeId, read: impl FnOnce(&Recorder) -> R) -> R {
+        self.content(id, |c| read(c.get::<Recorder>(node).expect("a recorder")))
+    }
 }
 
 fn ids(state: &ModalState) -> Vec<(Symbol, ModalPhase, bool)> {
@@ -38,53 +225,61 @@ fn ids(state: &ModalState) -> Vec<(Symbol, ModalPhase, bool)> {
 
 #[test]
 fn a_push_opens_over_the_top_and_leaves_the_lower_one_alone() {
-    let state = timed();
-    assert!(state.push("settings"));
-    state.advance(1.0);
-    state.take_events();
-    assert!(state.push("confirm"), "a second modal goes over the first");
+    let mut env = env(timed());
+    assert_eq!(env.push("settings"), Ok(()));
+    env.state.advance(1.0);
+    env.state.take_events();
     assert_eq!(
-        ids(&state),
+        env.push("confirm"),
+        Ok(()),
+        "a second modal goes over the first"
+    );
+    assert_eq!(
+        ids(&env.state),
         [
             (sym!("settings"), ModalPhase::Open, false),
             (sym!("confirm"), ModalPhase::Opening, true),
         ]
     );
-    assert_eq!(state.progress("confirm"), 0.0);
+    assert_eq!(env.state.progress("confirm"), 0.0);
     assert!(
-        state.take_events().is_empty(),
+        env.state.take_events().is_empty(),
         "the lower one emits nothing"
     );
+    assert_eq!(env.modals().len(), 2, "one layer per entry");
 }
 
 #[test]
 fn a_duplicate_push_is_refused() {
-    let state = timed();
-    assert!(state.push("settings"));
-    assert!(
-        !state.push(sym!("settings")),
+    let mut env = env(timed());
+    assert_eq!(env.push("settings"), Ok(()));
+    assert_eq!(
+        env.push(sym!("settings")),
+        Err(ModalError::AlreadyOpen),
         "an id already open is refused"
     );
-    assert_eq!(state.depth(), 1);
+    assert_eq!(env.state.depth(), 1);
+    assert_eq!(env.modals().len(), 1, "the refused modal makes no layer");
 }
 
+/// Plan 05 removed `MAX_MODAL_DEPTH`: the stack has no depth limit.
 #[test]
 fn a_fifth_modal_is_refused() {
-    let state = instant();
-    for name in ["a", "b", "c", "d"] {
-        assert!(state.push(name));
+    let mut env = env(instant());
+    for name in ["a", "b", "c", "d", "e", "f"] {
+        assert_eq!(env.push(name), Ok(()), "{name}");
     }
-    assert_eq!(state.depth(), MAX_MODAL_DEPTH);
-    assert!(!state.push("e"), "the stack holds four");
-    state.take_events();
-    assert!(state.take_events().is_empty());
+    assert_eq!(env.state.depth(), 6, "a fifth and a sixth are accepted");
+    assert_eq!(env.modals().len(), 6);
+    assert_eq!(env.state.top(), Some(sym!("f")));
 }
 
 #[test]
 fn dismiss_closes_only_the_top_and_the_one_below_becomes_top() {
-    let state = timed();
-    state.push("settings");
-    state.push("confirm");
+    let mut env = env(timed());
+    env.push("settings").unwrap();
+    env.push("confirm").unwrap();
+    let state = Arc::clone(&env.state);
     state.advance(1.0);
     state.take_events();
     state.dismiss(DismissReason::Escape);
@@ -112,45 +307,51 @@ fn dismiss_closes_only_the_top_and_the_one_below_becomes_top() {
         }]
     );
     assert_eq!(state.depth(), 1);
+    assert_eq!(env.modals().len(), 1, "its layer is dropped");
 }
 
 #[test]
 fn replace_top_reports_replaced_and_opens_at_once() {
-    let state = timed();
-    state.push("pause");
-    state.advance(1.0);
-    state.take_events();
-    assert!(state.replace_top("quit"));
+    let mut env = env(timed());
+    env.push("pause").unwrap();
+    env.state.advance(1.0);
+    env.state.take_events();
+    assert_eq!(env.replace_top("quit"), Ok(()));
     assert_eq!(
-        state.take_events(),
+        env.state.take_events(),
         [ModalEvent::Dismissed {
             id: sym!("pause"),
             by: DismissReason::Replaced
         }]
     );
     assert_eq!(
-        ids(&state),
+        ids(&env.state),
         [
             (sym!("pause"), ModalPhase::Closing, false),
             (sym!("quit"), ModalPhase::Opening, true),
         ],
         "both animate together"
     );
-    let empty = timed();
-    assert!(empty.replace_top("only"), "with no top it is a push");
-    assert_eq!(empty.top(), Some(sym!("only")));
+    assert_eq!(env.modals().len(), 2, "both have a layer");
+    let mut empty = self::env(timed());
+    assert_eq!(
+        empty.replace_top("only"),
+        Ok(()),
+        "with no top it is a push"
+    );
+    assert_eq!(empty.state.top(), Some(sym!("only")));
 }
 
 #[test]
 fn replaced_is_reported_only_by_replace_top() {
-    let state = instant();
-    state.push("a");
-    state.pop();
-    state.push("b");
-    state.close("b");
-    state.push("c");
-    state.dismiss_all(DismissReason::App);
-    let replaced = state.take_events().into_iter().any(|e| {
+    let mut env = env(instant());
+    env.push("a").unwrap();
+    env.state.pop();
+    env.push("b").unwrap();
+    env.state.close("b");
+    env.push("c").unwrap();
+    env.state.dismiss_all(DismissReason::App);
+    let replaced = env.state.take_events().into_iter().any(|e| {
         matches!(
             e,
             ModalEvent::Dismissed {
@@ -167,13 +368,14 @@ fn replaced_is_reported_only_by_replace_top() {
 
 #[test]
 fn dismiss_all_closes_top_first() {
-    let state = timed();
-    state.push("a");
-    state.push("b");
-    state.push("c");
-    state.take_events();
-    state.dismiss_all(DismissReason::Back);
-    let order: Vec<Symbol> = state
+    let mut env = env(timed());
+    for name in ["a", "b", "c"] {
+        env.push(name).unwrap();
+    }
+    env.state.take_events();
+    env.state.dismiss_all(DismissReason::Back);
+    let order: Vec<Symbol> = env
+        .state
         .take_events()
         .into_iter()
         .map(|e| match e {
@@ -182,38 +384,56 @@ fn dismiss_all_closes_top_first() {
         })
         .collect();
     assert_eq!(order, [sym!("c"), sym!("b"), sym!("a")]);
-    assert_eq!(state.top(), None);
+    assert_eq!(env.state.top(), None);
 }
 
 #[test]
 fn pushing_an_id_that_is_closing_waits_for_its_close() {
-    let state = timed();
-    state.push("settings");
-    state.advance(1.0);
-    state.pop();
-    state.take_events();
-    assert!(state.push("settings"), "queued, so accepted");
-    assert_eq!(state.depth(), 1, "not pushed yet");
-    state.advance(1.0);
+    let mut env = env(timed());
+    env.push("settings").unwrap();
+    env.state.advance(1.0);
+    env.state.pop();
+    env.state.take_events();
+    let again = Sheet::new(Rect::new(10.0, 10.0, 50.0, 50.0));
     assert_eq!(
-        state.take_events(),
+        env.router.push_modal("settings", again),
+        Ok(()),
+        "queued, so accepted"
+    );
+    assert_eq!(env.state.depth(), 1, "not pushed yet");
+    assert_eq!(env.modals().len(), 1, "nor its layer");
+    assert_eq!(
+        env.sheet("settings").rect,
+        FRAME,
+        "the closing layer is still the first one"
+    );
+    env.state.advance(1.0);
+    assert_eq!(
+        env.state.take_events(),
         [ModalEvent::Closed {
             id: sym!("settings"),
             by: DismissReason::App
         }]
     );
     assert_eq!(
-        state.phase("settings"),
+        env.state.phase("settings"),
         ModalPhase::Opening,
         "pushed after the close"
+    );
+    assert_eq!(env.modals().len(), 1);
+    assert_eq!(
+        env.sheet("settings").rect,
+        Rect::new(10.0, 10.0, 50.0, 50.0),
+        "the queued modal's layer appears with its entry"
     );
 }
 
 #[test]
 fn timed_and_driven_entries_move_independently() {
-    let state = ModalState::new().with_transition(ModalTransition::Driven);
-    state.push("book");
-    state.push_with("confirm", TIMED);
+    let mut env = env(driven());
+    env.push("book").unwrap();
+    env.push_with("confirm", TIMED).unwrap();
+    let state = &env.state;
     state.advance(0.1);
     assert_eq!(
         state.progress("book"),
@@ -240,14 +460,17 @@ fn timed_and_driven_entries_move_independently() {
 
 #[test]
 fn an_instant_modal_is_open_at_once() {
-    let state = instant();
-    state.push("a");
-    assert_eq!(state.phase("a"), ModalPhase::Open);
-    assert_eq!(state.progress("a"), 1.0);
-    assert_eq!(state.take_events(), [ModalEvent::Opened { id: sym!("a") }]);
-    state.pop();
+    let mut env = env(instant());
+    env.push("a").unwrap();
+    assert_eq!(env.state.phase("a"), ModalPhase::Open);
+    assert_eq!(env.state.progress("a"), 1.0);
     assert_eq!(
-        state.take_events(),
+        env.state.take_events(),
+        [ModalEvent::Opened { id: sym!("a") }]
+    );
+    env.state.pop();
+    assert_eq!(
+        env.state.take_events(),
         [
             ModalEvent::Dismissed {
                 id: sym!("a"),
@@ -260,13 +483,13 @@ fn an_instant_modal_is_open_at_once() {
         ],
         "an instant close finishes in the same call"
     );
-    let zero = ModalState::new().with_transition(ModalTransition::Timed {
+    let mut zero = self::env(ModalState::new().with_transition(ModalTransition::Timed {
         open_secs: 0.0,
         close_secs: 0.0,
-    });
-    zero.push("z");
+    }));
+    zero.push("z").unwrap();
     assert_eq!(
-        zero.phase("z"),
+        zero.state.phase("z"),
         ModalPhase::Open,
         "a zero duration is instant"
     );
@@ -274,19 +497,19 @@ fn an_instant_modal_is_open_at_once() {
 
 #[test]
 fn every_dismissed_is_followed_by_one_closed_with_the_same_id() {
-    let state = timed();
+    let mut env = env(timed());
     for name in ["a", "b", "c"] {
-        state.push(name);
+        env.push(name).unwrap();
     }
-    state.advance(1.0);
-    state.dismiss(DismissReason::Escape);
-    state.replace_top("d");
-    state.close("a");
-    state.dismiss_all(DismissReason::OutsideTap);
+    env.state.advance(1.0);
+    env.state.dismiss(DismissReason::Escape);
+    env.replace_top("d").unwrap();
+    env.state.close("a");
+    env.state.dismiss_all(DismissReason::OutsideTap);
     for _ in 0..20 {
-        state.advance(0.05);
+        env.state.advance(0.05);
     }
-    let events = state.take_events();
+    let events = env.state.take_events();
     let dismissed: Vec<(Symbol, DismissReason)> = events
         .iter()
         .filter_map(|e| match *e {
@@ -305,58 +528,62 @@ fn every_dismissed_is_followed_by_one_closed_with_the_same_id() {
     for d in &dismissed {
         assert_eq!(closed.iter().filter(|c| *c == d).count(), 1, "{d:?}");
     }
-    assert_eq!(state.depth(), 0);
+    assert_eq!(env.state.depth(), 0);
+    assert!(env.modals().is_empty(), "every layer is dropped");
 }
 
 #[test]
 fn dismissing_with_no_top_does_nothing() {
-    let state = timed();
-    state.dismiss(DismissReason::Escape);
-    state.pop();
-    assert!(state.take_events().is_empty());
-    state.push("a");
-    state.advance(1.0);
-    state.pop();
-    state.take_events();
-    state.dismiss(DismissReason::Escape);
+    let mut env = env(timed());
+    env.state.dismiss(DismissReason::Escape);
+    env.state.pop();
+    assert!(env.state.take_events().is_empty());
+    env.push("a").unwrap();
+    env.state.advance(1.0);
+    env.state.pop();
+    env.state.take_events();
+    env.state.dismiss(DismissReason::Escape);
     assert!(
-        state.take_events().is_empty(),
+        env.state.take_events().is_empty(),
         "a second Escape while closing does nothing"
     );
 }
 
 #[test]
 fn events_are_taken_once() {
-    let state = instant();
-    state.push("a");
-    assert_eq!(state.take_events().len(), 1);
-    assert!(state.take_events().is_empty());
+    let mut env = env(instant());
+    env.push("a").unwrap();
+    assert_eq!(env.state.take_events().len(), 1);
+    assert!(env.state.take_events().is_empty());
 }
 
 #[test]
 fn advance_ignores_negative_and_nan_dt() {
-    let state = timed();
-    state.push("a");
-    state.advance(-1.0);
-    state.advance(f32::NAN);
-    state.advance(f32::INFINITY);
-    assert_eq!(state.progress("a"), 0.0);
-    assert!(state.advance(0.1), "still animating");
+    let mut env = env(timed());
+    env.push("a").unwrap();
+    env.state.advance(-1.0);
+    env.state.advance(f32::NAN);
+    env.state.advance(f32::INFINITY);
+    assert_eq!(env.state.progress("a"), 0.0);
+    assert!(env.state.advance(0.1), "still animating");
 }
 
 #[test]
 fn captures_input_follows_the_entries_without_a_lock() {
-    let state = timed();
-    assert!(!state.captures_input());
-    state.push("a");
-    assert!(state.captures_input(), "from the push");
-    state.advance(1.0);
-    state.pop();
-    assert!(state.captures_input(), "through Closing");
-    state.advance(0.05);
-    assert!(state.captures_input());
-    state.advance(1.0);
-    assert!(!state.captures_input(), "false once the last entry is gone");
+    let mut env = env(timed());
+    assert!(!env.state.captures_input());
+    env.push("a").unwrap();
+    assert!(env.state.captures_input(), "from the push");
+    env.state.advance(1.0);
+    env.state.pop();
+    assert!(env.state.captures_input(), "through Closing");
+    env.state.advance(0.05);
+    assert!(env.state.captures_input());
+    env.state.advance(1.0);
+    assert!(
+        !env.state.captures_input(),
+        "false once the last entry is gone"
+    );
 }
 
 #[test]
@@ -364,15 +591,20 @@ fn ids_are_symbols_and_events_are_copy() {
     fn assert_copy<T: Copy>() {}
     assert_copy::<ModalEvent>();
     assert_copy::<DismissReason>();
-    let state = instant();
-    state.push(String::from("built"));
-    assert!(state.contains(sym!("built")));
-    assert!(state.contains("built"));
-    let event = state.take_events()[0];
+    let mut env = env(instant());
+    env.push(String::from("built")).unwrap();
+    assert!(env.state.contains(sym!("built")));
+    assert!(env.state.contains("built"));
+    let event = env.state.take_events()[0];
     let again = event;
     assert_eq!(event, again);
-    let control = DismissReason::Control(sym!("close"));
-    assert_eq!(control, DismissReason::Control(Symbol::intern("close")));
+    // `DismissReason::Control` carries the close control's `NodeId` now.
+    let close = env.router.add(None, Recorder::at(0.0));
+    let control = DismissReason::Control(close);
+    assert_eq!(
+        control,
+        DismissReason::Control(close.to_string().parse().unwrap())
+    );
 }
 
 fn every_kind() -> [InputEvent; 4] {
@@ -390,125 +622,133 @@ fn every_kind() -> [InputEvent; 4] {
     ]
 }
 
-#[test]
-fn the_filter_passes_while_the_state_is_empty() {
-    let modals = Arc::new(timed());
-    let filter = modals.filter(sym!("modals"));
-    let base = Recorder::at(0.0);
-    let sink = Recorder::at(500.0);
-    let mut host = ControlHost::builder()
-        .with_control(ControlHandle::new(&base))
-        .with_named_control(sym!("modals"), ControlHandle::new(&sink))
-        .with_filter(&filter)
-        .build();
-    let resp = host.deliver_mouse(MouseEvent::Down {
-        pos: [10.0, 10.0],
-        button: MouseButton::Left,
-    });
-    assert_eq!(resp.target_index, Some(0), "routing as usual");
-    assert!(sink.take().is_empty());
+fn handler_calls(calls: Vec<Call>) -> usize {
+    calls
+        .iter()
+        .filter(|c| matches!(c, Call::Mouse(..) | Call::Key(..) | Call::Gesture(..)))
+        .count()
 }
 
+// `ModalFilter` is gone: the installed stack's layer chain, run by the root
+// router after the global filters, takes its place.
+
+#[test]
+fn the_filter_passes_while_the_state_is_empty() {
+    let mut env = env(timed());
+    let base = env.router.add(None, Recorder::at(0.0));
+    let resp = env.send(InputEvent::Mouse(MouseEvent::Down {
+        pos: [10.0, 10.0],
+        button: MouseButton::Left,
+    }));
+    assert_eq!(resp.target, Some(base), "routing as usual");
+    assert_eq!(handler_calls(env.app(base).take()), 1);
+}
+
+/// The layer chain takes every event while any entry exists: the top modal
+/// receives them while it is open, and nothing does while it opens or
+/// closes. (Plan 03's filter redirected all of them to the stack's node.)
 #[test]
 fn the_filter_redirects_to_its_target_while_any_modal_exists() {
-    let modals = Arc::new(ModalState::new().with_transition(ModalTransition::Driven));
-    let filter = ModalFilter::new(Arc::clone(&modals), "modals");
-    assert_eq!(filter.target(), sym!("modals"));
-    modals.push("settings");
+    let mut env = env(driven());
+    let base = env.router.add(None, Recorder::at(0.0));
+    env.router
+        .push_modal("settings", Sheet::new(Rect::new(0.0, 0.0, 100.0, 100.0)))
+        .unwrap();
     for phase in [ModalPhase::Opening, ModalPhase::Open, ModalPhase::Closing] {
         match phase {
-            ModalPhase::Open => modals.set_progress("settings", 1.0),
-            ModalPhase::Closing => modals.pop(),
+            ModalPhase::Open => env.state.set_progress("settings", 1.0),
+            ModalPhase::Closing => env.state.pop(),
             _ => {}
         }
-        assert_eq!(modals.phase("settings"), phase);
-        let base = Recorder::at(0.0);
-        let sink = Recorder::at(500.0);
-        let mut host = ControlHost::builder()
-            .with_control(ControlHandle::new(&base))
-            .with_named_control("modals", ControlHandle::new(&sink))
-            .with_filter(&filter)
-            .build();
+        assert_eq!(env.state.phase("settings"), phase);
         for event in every_kind() {
-            let resp = host.deliver_event(event);
-            assert_eq!(resp.target_id, Some(sym!("modals")), "{phase:?}: {event:?}");
+            let resp = env.send(event);
+            assert!(resp.handled, "{phase:?}: {event:?}");
+            let expected = (phase == ModalPhase::Open).then_some(env.stack);
+            assert_eq!(resp.target, expected, "{phase:?}: {event:?}");
         }
-        let handled = sink
-            .take()
-            .iter()
-            .filter(|c| matches!(c, Call::Mouse(..) | Call::Key(..) | Call::Gesture(..)))
-            .count();
-        assert_eq!(handled, 4, "{phase:?}: the stack gets every event");
-        assert!(base.take().is_empty(), "{phase:?}: the base gets nothing");
+        let handled = handler_calls(env.sheet("settings").take());
+        let expected = if phase == ModalPhase::Open { 4 } else { 0 };
+        assert_eq!(handled, expected, "{phase:?}: the top modal's share");
+        assert_eq!(
+            handler_calls(env.app(base).take()),
+            0,
+            "{phase:?}: the base gets nothing"
+        );
     }
 }
 
 #[test]
 fn a_modifier_change_is_consumed_while_a_modal_exists() {
-    let modals = Arc::new(instant());
-    let filter = modals.filter("modals");
-    modals.push("a");
-    let sink = Recorder::at(0.0);
-    let mut host = ControlHost::builder()
-        .with_named_control("modals", ControlHandle::new(&sink))
-        .with_filter(&filter)
-        .build();
-    let resp = host.deliver_event(InputEvent::Modifiers(Modifiers {
+    let mut env = env(instant());
+    env.push("a").unwrap();
+    let resp = env.send(InputEvent::Modifiers(Modifiers {
         shift: true,
         ..Modifiers::default()
     }));
-    assert!(resp.handled && resp.target_index.is_none());
-    assert!(sink.take().is_empty());
+    assert!(resp.handled && resp.target.is_none());
+    assert!(env.sheet("a").take().is_empty());
 }
 
+/// Plan 03 trapped input even when the filter's target was not hosted. Now:
+/// pointer events that miss the top modal are still trapped, and keys and
+/// gestures still go to it.
 #[test]
 fn a_filter_whose_target_is_not_hosted_still_traps_input() {
-    let modals = Arc::new(instant());
-    let filter = modals.filter("modals");
-    modals.push("a");
-    let base = Recorder::at(0.0);
-    let mut host = ControlHost::builder()
-        .with_control(ControlHandle::new(&base))
-        .with_filter(&filter)
-        .build();
+    let mut env = env(instant());
+    let base = env.router.add(None, Recorder::at(0.0));
+    let far = Sheet::new(Rect::new(500.0, 500.0, 60.0, 60.0)).with_options(
+        ModalOptions::default().with_dismiss(DismissOn {
+            outside_tap: false,
+            ..DismissOn::default()
+        }),
+    );
+    env.router.push_modal("a", far).unwrap();
     for event in every_kind() {
-        let resp = host.deliver_event(event);
-        assert!(resp.handled && resp.target_index.is_none(), "{event:?}");
+        let resp = env.send(event);
+        assert!(resp.handled, "{event:?}");
+        if let InputEvent::Mouse(_) = event {
+            assert!(resp.target.is_none(), "{event:?} is blocked");
+        }
     }
-    assert!(base.take().is_empty(), "nothing reaches the base");
+    assert_eq!(
+        handler_calls(env.app(base).take()),
+        0,
+        "nothing reaches the base"
+    );
+    let calls = env.sheet("a").take();
+    assert!(
+        calls
+            .iter()
+            .all(|c| matches!(c, Call::Key(..) | Call::Gesture(..) | Call::Hover(None))),
+        "only the key and the gesture reach the modal, which is told the pointer is outside it: {calls:?}"
+    );
+    assert_eq!(handler_calls(calls), 2);
 }
 
+/// Plan 03 rebuilt the host each frame around one filter; the router is
+/// built once and its stack serves every frame.
 #[test]
 fn one_filter_serves_many_builds() {
-    let modals = Arc::new(instant());
-    let filter = modals.filter("modals");
-    let sink = Recorder::at(0.0);
+    let mut env = env(instant());
     let mut seen = Vec::new();
     for round in 0..3 {
         if round == 1 {
-            modals.push("a");
+            env.push("a").unwrap();
         }
-        let mut host = ControlHost::builder()
-            .with_named_control("modals", ControlHandle::new(&sink))
-            .with_filter(&filter)
-            .build();
-        let resp = host.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Enter });
-        seen.push(resp.target_id);
+        env.render();
+        let resp = env.send(InputEvent::Keyboard(KeyboardEvent::KeyDown {
+            key: Key::Enter,
+        }));
+        seen.push(resp.target);
     }
-    assert_eq!(seen, [None, Some(sym!("modals")), Some(sym!("modals"))]);
+    assert_eq!(seen, [None, Some(env.stack), Some(env.stack)]);
 }
 
-const VIEWPORT: Rect = Rect::new(0.0, 0.0, 800.0, 600.0);
-const FRAME: Rect = Rect::new(200.0, 150.0, 400.0, 300.0);
-const CONTENT: Rect = Rect::new(220.0, 170.0, 360.0, 260.0);
-const FRAME_COLOR: [f32; 4] = [0.2, 0.3, 0.4, 1.0];
-const BUTTON_BG: [f32; 4] = [0.0, 0.6, 0.0, 1.0];
-const TIP_BG: [f32; 4] = [0.6, 0.0, 0.6, 1.0];
-
 /// A frame painter that draws one box and remembers every view it is given.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct RecordingFrame {
-    views: RefCell<Vec<ModalView>>,
+    views: Rc<RefCell<Vec<ModalView>>>,
 }
 
 impl ModalFrame for RecordingFrame {
@@ -524,86 +764,89 @@ impl ModalFrame for RecordingFrame {
     }
 }
 
-fn driven() -> Arc<ModalState> {
-    Arc::new(ModalState::new().with_transition(ModalTransition::Driven))
-}
-
 fn content_button() -> Button {
     Button::new("OK", Rect::new(240.0, 200.0, 80.0, 30.0)).with_bg(BUTTON_BG)
-}
-
-fn draw(control: &dyn DrawControl) -> DrawList {
-    let mut list = DrawList::new();
-    control.draw(&mut list, &DrawContext::default());
-    list
 }
 
 fn position_of(list: &DrawList, color: [f32; 4]) -> Option<usize> {
     list.instances.iter().position(|i| i.color == color)
 }
 
+fn dialog() -> ModalDialog {
+    ModalDialog::new(VIEWPORT, FRAME, CONTENT)
+}
+
+fn tip_grid(rect: Rect) -> Options {
+    let grid = Options::new(&["SV - Save"], rect)
+        .with_tooltip_style(TooltipStyle::default().with_bg(TIP_BG));
+    grid.set_hover(Some(ControlPart::Custom(0)));
+    grid
+}
+
+/// A stack with no entry draws nothing, and a dialog whose entry has closed
+/// is no longer drawn (its layer is dropped).
 #[test]
 fn a_modal_with_no_entry_draws_nothing() {
-    let modals = driven();
-    let button = content_button();
-    let modal = Modal::new(Arc::clone(&modals), "settings", VIEWPORT, FRAME, CONTENT)
-        .with_control(button.handle());
-    assert!(modal.view().is_none());
-    assert!(draw(&modal).instances.is_empty());
+    let mut env = env(driven());
+    assert!(env.render().instances.is_empty());
+    let mut modal = dialog();
+    modal.content_mut().add(None, content_button());
+    env.router.push_modal("settings", modal).unwrap();
+    env.state.set_progress("settings", 1.0);
+    assert!(!env.render().instances.is_empty());
+    env.state.close("settings");
+    env.state.set_progress("settings", 0.0);
+    assert!(env.render().instances.is_empty());
 }
 
 #[test]
 fn the_backdrop_covers_the_viewport_and_fades_with_progress() {
-    let modals = driven();
-    modals.push("settings");
-    modals.set_progress("settings", 0.5);
-    let modal = Modal::new(Arc::clone(&modals), "settings", VIEWPORT, FRAME, CONTENT)
-        .with_backdrop(Some(Backdrop {
+    for (fade, alpha) in [(true, 0.4), (false, 0.8)] {
+        let mut env = env(driven());
+        let options = ModalOptions::default().with_backdrop(Some(Backdrop {
             color: [0.0, 0.0, 0.0, 0.8],
-            fade_with_progress: true,
+            fade_with_progress: fade,
         }));
-    let list = draw(&modal);
-    let backdrop = list.instances[0];
-    assert_eq!(backdrop.position, VIEWPORT.pos());
-    assert_eq!(backdrop.size, VIEWPORT.size());
-    assert!(
-        (backdrop.color[3] - 0.4).abs() < 1e-5,
-        "0.8 at half progress"
-    );
-    let steady = Modal::new(Arc::clone(&modals), "settings", VIEWPORT, FRAME, CONTENT)
-        .with_backdrop(Some(Backdrop {
-            color: [0.0, 0.0, 0.0, 0.8],
-            fade_with_progress: false,
-        }));
-    assert!((draw(&steady).instances[0].color[3] - 0.8).abs() < 1e-5);
+        env.router
+            .push_modal("settings", dialog().with_options(options))
+            .unwrap();
+        env.state.set_progress("settings", 0.5);
+        let list = env.render();
+        let backdrop = list.instances[0];
+        assert_eq!(backdrop.position, VIEWPORT.pos());
+        assert_eq!(backdrop.size, VIEWPORT.size());
+        assert!(
+            (backdrop.color[3] - alpha).abs() < 1e-5,
+            "fade {fade}: {alpha} at half progress"
+        );
+    }
 }
 
 #[test]
 fn no_backdrop_means_no_backdrop_instance() {
-    let modals = driven();
-    modals.push("settings");
-    let modal = Modal::new(Arc::clone(&modals), "settings", VIEWPORT, FRAME, CONTENT)
-        .with_backdrop(None)
+    let mut env = env(driven());
+    let modal = dialog()
+        .with_options(ModalOptions::default().with_backdrop(None))
         .with_frame(RecordingFrame::default());
-    let list = draw(&modal);
+    env.router.push_modal("settings", modal).unwrap();
+    let list = env.render();
     assert_eq!(list.instances.len(), 1, "only the frame");
     assert_eq!(list.instances[0].color, FRAME_COLOR);
 }
 
 #[test]
 fn the_frame_painter_is_called_with_the_view() {
-    let modals = driven();
-    modals.push("settings");
-    modals.push("confirm");
-    modals.set_progress("settings", 1.0);
-    modals.set_progress("confirm", 0.25);
+    let mut env = env(driven());
     let frame = RecordingFrame::default();
-    let lower =
-        Modal::new(Arc::clone(&modals), "settings", VIEWPORT, FRAME, CONTENT).with_frame(&frame);
-    draw(&lower);
-    let upper =
-        Modal::new(Arc::clone(&modals), "confirm", VIEWPORT, FRAME, CONTENT).with_frame(&frame);
-    draw(&upper);
+    env.router
+        .push_modal("settings", dialog().with_frame(frame.clone()))
+        .unwrap();
+    env.router
+        .push_modal("confirm", dialog().with_frame(frame.clone()))
+        .unwrap();
+    env.state.set_progress("settings", 1.0);
+    env.state.set_progress("confirm", 0.25);
+    env.render();
     let views = frame.views.borrow();
     assert_eq!(views.len(), 2);
     let (l, u) = (views[0], views[1]);
@@ -621,34 +864,30 @@ fn the_frame_painter_is_called_with_the_view() {
 
 #[test]
 fn when_open_content_is_hidden_while_opening() {
-    let modals = driven();
-    modals.push("book");
-    modals.set_progress("book", 0.9);
-    let button = content_button();
-    let modal = Modal::new(Arc::clone(&modals), "book", VIEWPORT, FRAME, CONTENT)
-        .with_reveal(ContentReveal::WhenOpen)
-        .with_control(button.handle());
+    let mut env = env(driven());
+    let mut modal = dialog().with_reveal(ContentReveal::WhenOpen);
+    modal.content_mut().add(None, content_button());
+    env.router.push_modal("book", modal).unwrap();
+    env.state.set_progress("book", 0.9);
     assert!(
-        position_of(&draw(&modal), BUTTON_BG).is_none(),
+        position_of(&env.render(), BUTTON_BG).is_none(),
         "hidden while opening"
     );
-    modals.set_progress("book", 1.0);
+    env.state.set_progress("book", 1.0);
     assert!(
-        position_of(&draw(&modal), BUTTON_BG).is_some(),
+        position_of(&env.render(), BUTTON_BG).is_some(),
         "shown once open"
     );
 }
 
 #[test]
 fn fade_scales_content_alpha_by_progress() {
-    let modals = driven();
-    modals.push("settings");
-    modals.set_progress("settings", 0.5);
-    let button = content_button();
-    let modal = Modal::new(Arc::clone(&modals), "settings", VIEWPORT, FRAME, CONTENT)
-        .with_frame(RecordingFrame::default())
-        .with_control(button.handle());
-    let list = draw(&modal);
+    let mut env = env(driven());
+    let mut modal = dialog().with_frame(RecordingFrame::default());
+    modal.content_mut().add(None, content_button());
+    env.router.push_modal("settings", modal).unwrap();
+    env.state.set_progress("settings", 0.5);
+    let list = env.render();
     let faded_bg = [BUTTON_BG[0], BUTTON_BG[1], BUTTON_BG[2], 0.5];
     let content = position_of(&list, faded_bg).expect("content alpha is halved");
     let frame = position_of(&list, FRAME_COLOR).expect("the frame is drawn");
@@ -661,17 +900,15 @@ fn fade_scales_content_alpha_by_progress() {
 
 #[test]
 fn content_is_clipped_and_its_tooltips_are_not() {
-    let modals = driven();
-    modals.push("settings");
-    modals.set_progress("settings", 1.0);
-    let grid = Options::new(&["SV - Save"], Rect::new(240.0, 200.0, 100.0, 20.0))
-        .with_tooltip_style(TooltipStyle::default().with_bg(TIP_BG));
-    grid.set_hover(Some(ControlPart::Custom(0)));
-    let button = content_button();
-    let modal = Modal::new(Arc::clone(&modals), "settings", VIEWPORT, FRAME, CONTENT)
-        .with_control(button.handle())
-        .with_control(grid.handle());
-    let list = draw(&modal);
+    let mut env = env(driven());
+    let mut modal = dialog();
+    modal.content_mut().add(None, content_button());
+    modal
+        .content_mut()
+        .add(None, tip_grid(Rect::new(240.0, 200.0, 100.0, 20.0)));
+    env.router.push_modal("settings", modal).unwrap();
+    env.state.set_progress("settings", 1.0);
+    let list = env.render();
     let content = position_of(&list, BUTTON_BG).expect("content drawn");
     let tip = position_of(&list, TIP_BG).expect("the hovered cell's tip is drawn");
     assert!(list.instance_clip(content).is_some(), "content is clipped");
@@ -680,42 +917,43 @@ fn content_is_clipped_and_its_tooltips_are_not() {
 
 #[test]
 fn only_the_top_draws_content_tooltips() {
-    let modals = driven();
-    modals.push("settings");
-    modals.push("confirm");
-    let grid = Options::new(&["SV - Save"], Rect::new(240.0, 200.0, 100.0, 20.0))
-        .with_tooltip_style(TooltipStyle::default().with_bg(TIP_BG));
-    grid.set_hover(Some(ControlPart::Custom(0)));
-    let lower = Modal::new(Arc::clone(&modals), "settings", VIEWPORT, FRAME, CONTENT)
-        .with_reveal(ContentReveal::Always)
-        .with_control(grid.handle());
+    let mut env = env(driven());
+    let mut lower = dialog().with_reveal(ContentReveal::Always);
+    lower
+        .content_mut()
+        .add(None, tip_grid(Rect::new(240.0, 200.0, 100.0, 20.0)));
+    env.router.push_modal("settings", lower).unwrap();
+    env.router
+        .push_modal(
+            "confirm",
+            dialog().with_options(ModalOptions::default().with_backdrop(None)),
+        )
+        .unwrap();
     assert!(
-        position_of(&draw(&lower), TIP_BG).is_none(),
+        position_of(&env.render(), TIP_BG).is_none(),
         "not the top: no tip"
     );
-    modals.close("confirm");
-    modals.set_progress("confirm", 0.0);
+    env.state.close("confirm");
+    env.state.set_progress("confirm", 0.0);
     assert!(
-        position_of(&draw(&lower), TIP_BG).is_some(),
+        position_of(&env.render(), TIP_BG).is_some(),
         "the top again: tip"
     );
 }
 
+/// `Router::render` is its `draw` pass then its `draw_overlay` pass.
 #[test]
 fn split_draw_passes_match_draw() {
-    let grid = Options::new(&["SV - Save"], Rect::new(0.0, 0.0, 100.0, 20.0))
-        .with_tooltip_style(TooltipStyle::default().with_bg(TIP_BG));
-    grid.set_hover(Some(ControlPart::Custom(0)));
-    let button = content_button();
-    let host = ControlHost::builder()
-        .with_control(grid.handle())
-        .with_control(button.handle())
-        .build();
+    let mut router = Router::new();
+    router.add(None, tip_grid(Rect::new(0.0, 0.0, 100.0, 20.0)));
+    router.add(None, content_button());
     let ctx = DrawContext::default();
-    let whole = draw(&host);
+    let mut whole = DrawList::new();
+    router.render(&mut whole, &ctx);
     let mut split = DrawList::new();
-    host.draw_controls(&mut split, &ctx);
-    host.draw_control_overlays(&mut split, &ctx);
+    router.draw(&mut split, &ctx);
+    router.draw_overlay(&mut split, &ctx);
+    assert!(position_of(&whole, TIP_BG).is_some());
     assert_eq!(whole.instances, split.instances, "instance for instance");
 }
 
@@ -765,23 +1003,24 @@ fn k(key: Key) -> InputEvent {
     InputEvent::Keyboard(KeyboardEvent::KeyDown { key })
 }
 
-const NO_MODS: Modifiers = Modifiers {
-    shift: false,
-    alt: false,
-    ctrl: false,
-    meta: false,
-};
-
-/// An open modal "m" on an instant stack.
-fn open_state() -> Arc<ModalState> {
-    let modals = Arc::new(instant());
-    modals.push("m");
-    modals.take_events();
-    modals
+/// An instant stack with dialog "m" (over `FRAME`) open, built by `build`,
+/// and its events taken.
+fn open_with(build: impl FnOnce(&mut ModalDialog)) -> Env {
+    open_with_on(instant(), build)
 }
 
-fn modal<'a>(state: &Arc<ModalState>) -> Modal<'a> {
-    Modal::new(Arc::clone(state), "m", VIEWPORT, FRAME, CONTENT)
+fn open_with_on(state: ModalState, build: impl FnOnce(&mut ModalDialog)) -> Env {
+    let mut env = env(state);
+    let mut modal = dialog();
+    build(&mut modal);
+    env.router.push_modal("m", modal).unwrap();
+    env.state.take_events();
+    env
+}
+
+/// An open dialog "m" with no content.
+fn open_state() -> Env {
+    open_with(|_| {})
 }
 
 fn dismissed(state: &ModalState) -> Vec<DismissReason> {
@@ -806,305 +1045,373 @@ fn refused(state: &ModalState) -> Vec<DismissReason> {
         .collect()
 }
 
+/// Replace the dialog's options in `build`.
+fn with_options(modal: &mut ModalDialog, options: ModalOptions) {
+    let taken = std::mem::replace(modal, dialog());
+    *modal = taken.with_options(options);
+}
+
+fn dismiss_on(dismiss: DismissOn) -> ModalOptions {
+    ModalOptions::default().with_dismiss(dismiss)
+}
+
 #[test]
 fn escape_dismisses_and_a_second_escape_does_nothing() {
-    let modals = Arc::new(timed());
-    modals.push("m");
-    modals.advance(1.0);
-    modals.take_events();
-    let m = modal(&modals);
-    m.deliver_event(k(Key::Escape), NO_MODS);
-    assert_eq!(dismissed(&modals), [DismissReason::Escape]);
-    m.deliver_event(k(Key::Escape), NO_MODS);
-    assert!(modals.take_events().is_empty(), "already closing");
+    let env = open_with_on(timed(), |_| {});
+    env.state.advance(1.0);
+    env.state.take_events();
+    env.send(k(Key::Escape));
+    assert_eq!(dismissed(&env.state), [DismissReason::Escape]);
+    env.send(k(Key::Escape));
+    assert!(env.state.take_events().is_empty(), "already closing");
 }
 
 #[test]
 fn back_dismisses_with_back() {
-    let modals = open_state();
-    modal(&modals).deliver_event(k(Key::Back), NO_MODS);
-    assert_eq!(dismissed(&modals), [DismissReason::Back]);
+    let env = open_state();
+    env.send(k(Key::Back));
+    assert_eq!(dismissed(&env.state), [DismissReason::Back]);
 }
 
 #[test]
 fn escape_and_back_dismiss_with_an_edit_focused() {
     for key in [Key::Escape, Key::Back] {
-        let modals = open_state();
-        let edit = Edit::new("name", Rect::new(240.0, 200.0, 200.0, 30.0));
-        let m = modal(&modals)
-            .with_named_control("name", edit.handle())
-            .with_initial_focus(ControlKey::named("name"));
-        m.deliver_event(k(Key::Char('a')), NO_MODS);
-        m.deliver_event(k(key), NO_MODS);
-        assert_eq!(dismissed(&modals).len(), 1, "{key:?} dismisses even then");
+        let env = open_with(|m| {
+            let edit = m.content_mut().add(
+                None,
+                Edit::new("name", Rect::new(240.0, 200.0, 200.0, 30.0)),
+            );
+            let taken = std::mem::replace(m, dialog());
+            *m = taken.with_initial_focus(edit);
+        });
+        env.send(k(Key::Char('a')));
+        env.send(k(key));
+        assert_eq!(
+            dismissed(&env.state).len(),
+            1,
+            "{key:?} dismisses even then"
+        );
     }
 }
 
 #[test]
 fn escape_reaches_the_content_when_disabled() {
-    let modals = open_state();
-    let r = rec(240.0, 200.0);
-    let m = modal(&modals)
-        .with_dismiss(DismissOn {
-            escape: false,
-            ..DismissOn::default()
-        })
-        .with_control(ControlHandle::new(&r))
-        .with_initial_focus(ControlKey::at(0));
-    m.deliver_event(k(Key::Escape), NO_MODS);
-    assert!(modals.take_events().is_empty());
+    let mut r = None;
+    let env = open_with(|m| {
+        let id = m.content_mut().add(None, rec(240.0, 200.0));
+        let taken = std::mem::replace(m, dialog());
+        *m = taken
+            .with_options(dismiss_on(DismissOn {
+                escape: false,
+                ..DismissOn::default()
+            }))
+            .with_initial_focus(id);
+        r = Some(id);
+    });
+    env.send(k(Key::Escape));
+    assert!(env.state.take_events().is_empty());
     assert_eq!(
-        r.focus(),
+        env.content_rec("m", r.unwrap(), Recorder::focus),
         [FocusEvent::Gained, FocusEvent::Lost],
-        "the content host clears its focus"
+        "the content router clears its focus"
     );
 }
 
 #[test]
 fn back_can_be_turned_off() {
-    let modals = open_state();
-    let r = rec(240.0, 200.0);
-    let m = modal(&modals)
-        .with_dismiss(DismissOn {
-            back: false,
-            ..DismissOn::default()
-        })
-        .with_control(ControlHandle::new(&r))
-        .with_initial_focus(ControlKey::at(0));
-    m.deliver_event(k(Key::Back), NO_MODS);
-    assert!(modals.take_events().is_empty());
+    let mut r = None;
+    let env = open_with(|m| {
+        let id = m.content_mut().add(None, rec(240.0, 200.0));
+        let taken = std::mem::replace(m, dialog());
+        *m = taken
+            .with_options(dismiss_on(DismissOn {
+                back: false,
+                ..DismissOn::default()
+            }))
+            .with_initial_focus(id);
+        r = Some(id);
+    });
+    env.send(k(Key::Back));
+    assert!(env.state.take_events().is_empty());
     assert!(
-        r.take().iter().any(|c| matches!(c, Call::Key(..))),
+        env.content_rec("m", r.unwrap(), Recorder::take)
+            .iter()
+            .any(|c| matches!(c, Call::Key(..))),
         "Back goes to the focused content control"
     );
 }
 
 #[test]
 fn a_press_and_release_outside_dismisses() {
-    let modals = open_state();
-    let m = modal(&modals);
-    m.deliver_event(m_down(50.0, 50.0), NO_MODS);
-    assert!(modals.take_events().is_empty(), "not on the press");
-    m.deliver_event(m_up(60.0, 50.0), NO_MODS);
-    assert_eq!(dismissed(&modals), [DismissReason::OutsideTap]);
+    let env = open_state();
+    env.send(m_down(50.0, 50.0));
+    assert!(env.state.take_events().is_empty(), "not on the press");
+    env.send(m_up(60.0, 50.0));
+    assert_eq!(dismissed(&env.state), [DismissReason::OutsideTap]);
 }
 
 #[test]
 fn a_release_outside_without_a_press_outside_does_not_dismiss() {
-    let modals = open_state();
-    let m = modal(&modals);
-    let resp = m.deliver_event(m_up(50.0, 50.0), NO_MODS);
+    let env = open_state();
+    let resp = env.send(m_up(50.0, 50.0));
     assert!(resp.handled, "consumed");
     assert!(
-        modals.take_events().is_empty(),
+        env.state.take_events().is_empty(),
         "the tail of the opening tap"
     );
 }
 
 #[test]
 fn a_drag_from_a_slider_to_outside_does_not_dismiss() {
-    let modals = open_state();
-    let slider = Slider::new(0.5, 0.0, 1.0, Rect::new(240.0, 200.0, 200.0, 20.0));
-    let m = modal(&modals).with_control(slider.handle());
-    m.deliver_event(m_down(250.0, 210.0), NO_MODS);
-    m.deliver_event(m_drag(50.0, 50.0), NO_MODS);
-    m.deliver_event(m_up(50.0, 50.0), NO_MODS);
-    assert!(modals.take_events().is_empty());
+    let env = open_with(|m| {
+        m.content_mut().add(
+            None,
+            Slider::new(0.5, 0.0, 1.0, Rect::new(240.0, 200.0, 200.0, 20.0)),
+        );
+    });
+    env.send(m_down(250.0, 210.0));
+    env.send(m_drag(50.0, 50.0));
+    env.send(m_up(50.0, 50.0));
+    assert!(env.state.take_events().is_empty());
 }
 
 #[test]
 fn a_click_outside_dismisses_for_click_only_shells() {
-    let modals = open_state();
-    modal(&modals).deliver_event(m_click(50.0, 50.0), NO_MODS);
-    assert_eq!(dismissed(&modals), [DismissReason::OutsideTap]);
+    let env = open_state();
+    env.send(m_click(50.0, 50.0));
+    assert_eq!(dismissed(&env.state), [DismissReason::OutsideTap]);
 }
 
 #[test]
 fn outside_tap_can_be_turned_off() {
-    let modals = open_state();
-    let m = modal(&modals).with_dismiss(DismissOn {
-        outside_tap: false,
-        ..DismissOn::default()
+    let env = open_with(|m| {
+        with_options(
+            m,
+            dismiss_on(DismissOn {
+                outside_tap: false,
+                ..DismissOn::default()
+            }),
+        );
     });
-    m.deliver_event(m_down(50.0, 50.0), NO_MODS);
-    m.deliver_event(m_up(50.0, 50.0), NO_MODS);
-    m.deliver_event(m_click(50.0, 50.0), NO_MODS);
-    assert!(modals.take_events().is_empty());
+    env.send(m_down(50.0, 50.0));
+    env.send(m_up(50.0, 50.0));
+    env.send(m_click(50.0, 50.0));
+    assert!(env.state.take_events().is_empty());
 }
 
+/// The close control is named by its `NodeId` in the content router now,
+/// and the response names the stack, carrying the dismissal.
 #[test]
 fn a_close_control_dismisses_with_its_symbol() {
-    let modals = open_state();
-    let close = Button::new("Close", Rect::new(240.0, 200.0, 80.0, 30.0));
-    let m = modal(&modals)
-        .with_named_control(sym!("close"), close.handle())
-        .with_close_control(sym!("close"));
-    let resp = m.deliver_event(m_down(250.0, 210.0), NO_MODS);
+    let mut close = None;
+    let env = open_with(|m| {
+        let id = m.content_mut().add(
+            None,
+            Button::new("Close", Rect::new(240.0, 200.0, 80.0, 30.0)),
+        );
+        let taken = std::mem::replace(m, dialog());
+        *m = taken.with_close_control(id);
+        close = Some(id);
+    });
+    let close = close.unwrap();
+    let resp = env.send(m_down(250.0, 210.0));
+    assert_eq!(resp.target, Some(env.stack), "the response is the stack's");
     assert_eq!(
-        resp.target_id,
-        Some(sym!("close")),
-        "the response is the content's"
+        resp.action,
+        Some(ControlAction::Dismiss {
+            control: Some(close)
+        })
     );
-    assert_eq!(dismissed(&modals), [DismissReason::Control(sym!("close"))]);
+    assert_eq!(dismissed(&env.state), [DismissReason::Control(close)]);
 }
 
 #[test]
 fn hold_open_refuses_user_dismissals_and_reports_them() {
-    let modals = open_state();
-    let close = Button::new("Close", Rect::new(240.0, 200.0, 80.0, 30.0));
-    let m = modal(&modals)
-        .with_hold_open(true)
-        .with_named_control("close", close.handle())
-        .with_close_control("close");
-    m.deliver_event(k(Key::Escape), NO_MODS);
-    m.deliver_event(k(Key::Back), NO_MODS);
-    m.deliver_event(m_down(50.0, 50.0), NO_MODS);
-    m.deliver_event(m_up(50.0, 50.0), NO_MODS);
-    m.deliver_event(m_down(250.0, 210.0), NO_MODS);
+    let mut close = None;
+    let env = open_with(|m| {
+        let id = m.content_mut().add(
+            None,
+            Button::new("Close", Rect::new(240.0, 200.0, 80.0, 30.0)),
+        );
+        let taken = std::mem::replace(m, dialog());
+        *m = taken
+            .with_options(ModalOptions::default().with_hold_open(true))
+            .with_close_control(id);
+        close = Some(id);
+    });
+    env.send(k(Key::Escape));
+    env.send(k(Key::Back));
+    env.send(m_down(50.0, 50.0));
+    env.send(m_up(50.0, 50.0));
+    env.send(m_down(250.0, 210.0));
     assert_eq!(
-        refused(&modals),
+        refused(&env.state),
         [
             DismissReason::Escape,
             DismissReason::Back,
             DismissReason::OutsideTap,
-            DismissReason::Control(sym!("close")),
+            DismissReason::Control(close.unwrap()),
         ]
     );
-    assert_eq!(modals.phase("m"), ModalPhase::Open, "it stays open");
+    assert_eq!(env.state.phase("m"), ModalPhase::Open, "it stays open");
 }
 
 #[test]
 fn hold_open_does_not_stop_app_dismissals() {
-    let modals = open_state();
-    let _m = modal(&modals).with_hold_open(true);
-    modals.pop();
-    assert_eq!(dismissed(&modals), [DismissReason::App]);
+    let env = open_with(|m| with_options(m, ModalOptions::default().with_hold_open(true)));
+    env.state.pop();
+    assert_eq!(dismissed(&env.state), [DismissReason::App]);
 }
 
 #[test]
 fn a_disabled_action_is_not_reported_as_refused() {
-    let modals = open_state();
-    let m = modal(&modals).with_hold_open(true).with_dismiss(DismissOn {
-        escape: false,
-        back: true,
-        outside_tap: false,
+    let env = open_with(|m| {
+        with_options(
+            m,
+            dismiss_on(DismissOn {
+                escape: false,
+                back: true,
+                outside_tap: false,
+            })
+            .with_hold_open(true),
+        );
     });
-    m.deliver_event(k(Key::Escape), NO_MODS);
-    m.deliver_event(m_click(50.0, 50.0), NO_MODS);
-    assert!(modals.take_events().is_empty());
+    env.send(k(Key::Escape));
+    env.send(m_click(50.0, 50.0));
+    assert!(env.state.take_events().is_empty());
 }
 
 #[test]
 fn content_receives_nothing_while_opening_or_closing() {
-    let modals = Arc::new(timed());
-    modals.push("m");
-    let r = rec(240.0, 200.0);
-    let m = modal(&modals).with_control(ControlHandle::new(&r));
-    m.deliver_event(m_down(250.0, 210.0), NO_MODS);
-    m.deliver_event(k(Key::Enter), NO_MODS);
-    assert!(r.take().is_empty(), "nothing while opening");
-    modals.advance(1.0);
-    modals.pop();
-    m.deliver_event(m_down(250.0, 210.0), NO_MODS);
-    assert!(r.take().is_empty(), "nothing while closing");
+    let mut r = None;
+    let env = open_with_on(timed(), |m| {
+        r = Some(m.content_mut().add(None, rec(240.0, 200.0)));
+    });
+    let r = r.unwrap();
+    env.send(m_down(250.0, 210.0));
+    env.send(k(Key::Enter));
+    assert!(
+        env.content_rec("m", r, Recorder::take).is_empty(),
+        "nothing while opening"
+    );
+    env.state.advance(1.0);
+    env.state.pop();
+    env.send(m_down(250.0, 210.0));
+    assert!(
+        env.content_rec("m", r, Recorder::take).is_empty(),
+        "nothing while closing"
+    );
 }
 
+/// Plan 03 rebuilt the modal each frame and carried its focus, grab and
+/// hover in the entry; now the dialog is built once and its content router
+/// keeps them across frames.
 #[test]
 fn focus_drag_and_hover_inside_the_modal_survive_a_rebuild() {
-    let modals = open_state();
-    let a = rec(240.0, 200.0);
-    let b = rec(340.0, 200.0);
-    let build = || {
-        modal(&modals)
-            .with_control(ControlHandle::new(&a))
-            .with_control(ControlHandle::new(&b))
+    let (mut a, mut b) = (None, None);
+    let env = open_with(|m| {
+        a = Some(m.content_mut().add(None, rec(240.0, 200.0)));
+        b = Some(m.content_mut().add(None, rec(340.0, 200.0)));
+    });
+    let (a, b) = (a.unwrap(), b.unwrap());
+    let frame = |event: InputEvent| {
+        env.render();
+        env.send(event);
     };
-    build().deliver_event(m_move(250.0, 210.0), NO_MODS);
-    build().deliver_event(m_down(250.0, 210.0), NO_MODS);
-    a.take();
-    build().deliver_event(m_drag(500.0, 400.0), NO_MODS);
-    let mouse: Vec<Call> = a
-        .take()
+    frame(m_move(250.0, 210.0));
+    frame(m_down(250.0, 210.0));
+    env.content_rec("m", a, Recorder::take);
+    frame(m_drag(500.0, 400.0));
+    let mouse: Vec<Call> = env
+        .content_rec("m", a, Recorder::take)
         .into_iter()
         .filter(|c| matches!(c, Call::Mouse(..)))
         .collect();
     assert!(
         matches!(mouse.as_slice(), [Call::Mouse(MouseEvent::Drag { .. }, _)]),
-        "the grab is carried (a rebuilt modal also re-sends Gained to its focus)"
+        "the grab is kept: {mouse:?}"
     );
-    build().deliver_event(m_up(500.0, 400.0), NO_MODS);
-    a.take();
-    build().deliver_event(m_move(500.0, 400.0), NO_MODS);
+    frame(m_up(500.0, 400.0));
+    env.content_rec("m", a, Recorder::take);
+    frame(m_move(500.0, 400.0));
     assert!(
-        a.hovers().contains(&None),
-        "the hover is carried, so leaving clears it"
+        env.content_rec("m", a, Recorder::hovers).contains(&None),
+        "the hover is kept, so leaving clears it"
     );
-    a.take();
-    b.take();
-    build().deliver_event(k(Key::Tab), NO_MODS);
+    env.content_rec("m", b, Recorder::take);
+    frame(k(Key::Tab));
     assert!(
-        a.focus().contains(&FocusEvent::Lost),
-        "the focus is carried"
+        env.content_rec("m", a, Recorder::focus)
+            .contains(&FocusEvent::Lost),
+        "the focus is kept"
     );
-    assert!(b.focus().contains(&FocusEvent::Gained));
+    assert!(
+        env.content_rec("m", b, Recorder::focus)
+            .contains(&FocusEvent::Gained)
+    );
 }
 
 #[test]
 fn initial_focus_is_applied_once_per_push() {
-    let modals = open_state();
-    let a = rec(240.0, 200.0);
-    let b = rec(340.0, 200.0);
-    let build = || {
-        modal(&modals)
-            .with_control(ControlHandle::new(&a))
-            .with_control(ControlHandle::new(&b))
-            .with_initial_focus(ControlKey::at(1))
-    };
-    build().deliver_event(k(Key::Enter), NO_MODS);
+    fn build(ids: &mut Option<(NodeId, NodeId)>) -> ModalDialog {
+        let mut m = dialog();
+        let a = m.content_mut().add(None, rec(240.0, 200.0));
+        let b = m.content_mut().add(None, rec(340.0, 200.0));
+        *ids = Some((a, b));
+        m.with_initial_focus(b)
+    }
+    let keys = |calls: Vec<Call>| calls.iter().any(|c| matches!(c, Call::Key(..)));
+    let mut env = env(instant());
+    let mut ids = None;
+    env.router.push_modal("m", build(&mut ids)).unwrap();
+    let (a, b) = ids.unwrap();
+    env.send(k(Key::Enter));
     assert!(
-        b.take().iter().any(|c| matches!(c, Call::Key(..))),
+        keys(env.content_rec("m", b, Recorder::take)),
         "b starts focused"
     );
-    build().deliver_event(k(Key::Tab), NO_MODS);
-    build().deliver_event(k(Key::Enter), NO_MODS);
+    env.send(k(Key::Tab));
+    env.send(k(Key::Enter));
     assert!(
-        a.take().iter().any(|c| matches!(c, Call::Key(..))),
-        "a rebuild keeps the moved focus instead of the initial one"
+        keys(env.content_rec("m", a, Recorder::take)),
+        "a later event keeps the moved focus instead of the initial one"
     );
-    modals.pop();
-    modals.push("m");
-    b.take();
-    build().deliver_event(k(Key::Enter), NO_MODS);
+    env.state.pop();
+    env.router.push_modal("m", build(&mut ids)).unwrap();
+    let (_, b) = ids.unwrap();
+    env.send(k(Key::Enter));
     assert!(
-        b.take().iter().any(|c| matches!(c, Call::Key(..))),
+        keys(env.content_rec("m", b, Recorder::take)),
         "a new push seeds it again"
     );
 }
 
 #[test]
 fn the_content_sees_the_modifiers_the_outer_host_saw() {
-    let modals = open_state();
-    let r = rec(240.0, 200.0);
-    let m = modal(&modals).with_control(ControlHandle::new(&r));
+    let mut r = None;
+    let env = open_with(|m| r = Some(m.content_mut().add(None, rec(240.0, 200.0))));
     let shift = Modifiers {
         shift: true,
-        ..NO_MODS
+        ..Modifiers::default()
     };
-    m.deliver_event(m_down(250.0, 210.0), shift);
-    assert_eq!(r.mouse_contexts()[0].modifiers, shift);
+    env.send(InputEvent::Modifiers(shift));
+    env.send(m_down(250.0, 210.0));
+    assert_eq!(
+        env.content_rec("m", r.unwrap(), Recorder::mouse_contexts)[0].modifiers,
+        shift
+    );
 }
 
 #[test]
 fn tab_cycles_the_content_only() {
-    let modals = open_state();
-    let a = rec(240.0, 200.0);
-    let b = rec(340.0, 200.0);
-    let m = modal(&modals)
-        .with_control(ControlHandle::new(&a))
-        .with_control(ControlHandle::new(&b));
+    let mut env = open_with(|m| {
+        m.content_mut().add(None, rec(240.0, 200.0));
+        m.content_mut().add(None, rec(340.0, 200.0));
+    });
+    env.router.add(None, Recorder::at(0.0));
     common::take_focus_journal();
     for _ in 0..3 {
-        m.deliver_event(k(Key::Tab), NO_MODS);
+        env.send(k(Key::Tab));
     }
     let order: Vec<(f32, FocusEvent)> = common::take_focus_journal();
     assert_eq!(
@@ -1116,35 +1423,29 @@ fn tab_cycles_the_content_only() {
             (340.0, FocusEvent::Lost),
             (240.0, FocusEvent::Gained),
         ],
-        "Tab wraps within the content"
+        "Tab wraps within the content; the app node at 0 is never focused"
     );
 }
 
-/// A frame whose tappable shape is only the left half of its rect.
-struct LeftHalf;
-
-impl ModalFrame for LeftHalf {
-    fn draw_frame(&self, _list: &mut DrawList, _ctx: &DrawContext, _view: &ModalView) {}
-
-    fn contains(&self, pos: [f32; 2], view: &ModalView) -> bool {
-        view.frame.contains(pos) && pos[0] < view.frame.x + view.frame.w / 2.0
-    }
-}
-
+/// `ModalFrame::contains` is no longer asked: a modal's shape is its
+/// layer filter's. A `ModalLayerFilter` over the test's own `LayerShape`.
 #[test]
 fn a_frame_shape_decides_what_is_outside() {
-    let modals = open_state();
-    let m = modal(&modals).with_frame(LeftHalf);
-    m.deliver_event(m_down(300.0, 300.0), NO_MODS);
-    m.deliver_event(m_up(300.0, 300.0), NO_MODS);
+    let mut env = env(instant());
+    let mut half = sheet();
+    half.left_half_only = true;
+    env.router.push_modal("m", half).unwrap();
+    env.state.take_events();
+    env.send(m_down(300.0, 300.0));
+    env.send(m_up(300.0, 300.0));
     assert!(
-        modals.take_events().is_empty(),
+        env.state.take_events().is_empty(),
         "the left half is on the modal"
     );
-    m.deliver_event(m_down(500.0, 300.0), NO_MODS);
-    m.deliver_event(m_up(500.0, 300.0), NO_MODS);
+    env.send(m_down(500.0, 300.0));
+    env.send(m_up(500.0, 300.0));
     assert_eq!(
-        dismissed(&modals),
+        dismissed(&env.state),
         [DismissReason::OutsideTap],
         "the right half is not"
     );
@@ -1154,183 +1455,131 @@ const LOWER_BG: [f32; 4] = [0.9, 0.1, 0.1, 1.0];
 const UPPER_BG: [f32; 4] = [0.1, 0.1, 0.9, 1.0];
 const UPPER_FRAME: Rect = Rect::new(300.0, 250.0, 200.0, 100.0);
 
-fn lower<'a>(state: &Arc<ModalState>) -> Modal<'a> {
-    Modal::new(Arc::clone(state), "lower", VIEWPORT, FRAME, CONTENT).with_frame(PanelFrame {
+fn lower() -> ModalDialog {
+    dialog().with_frame(PanelFrame {
         bg_color: Some(LOWER_BG),
         ..PanelFrame::default()
     })
 }
 
-fn upper<'a>(state: &Arc<ModalState>) -> Modal<'a> {
-    Modal::new(
-        Arc::clone(state),
-        "upper",
-        VIEWPORT,
-        UPPER_FRAME,
-        UPPER_FRAME.pad(-10.0),
-    )
-    .with_frame(PanelFrame {
+fn upper() -> ModalDialog {
+    ModalDialog::new(VIEWPORT, UPPER_FRAME, UPPER_FRAME.pad(-10.0)).with_frame(PanelFrame {
         bg_color: Some(UPPER_BG),
         ..PanelFrame::default()
     })
 }
 
-fn handler_calls(r: &Recorder) -> usize {
-    r.take()
+fn backdrops(list: &DrawList) -> Vec<usize> {
+    list.instances
         .iter()
-        .filter(|c| matches!(c, Call::Mouse(..) | Call::Key(..) | Call::Gesture(..)))
-        .count()
+        .enumerate()
+        .filter(|(_, i)| i.size == VIEWPORT.size())
+        .map(|(n, _)| n)
+        .collect()
 }
 
 #[test]
 fn an_empty_stack_is_transparent_and_draws_nothing() {
-    let modals = Arc::new(instant());
-    let filter = modals.filter("modals");
-    let base = Recorder::at(0.0);
-    let stack = ModalStack::new(Arc::clone(&modals), VIEWPORT);
-    assert_eq!(stack.hit_test([10.0, 10.0]), None);
-    let mut host = ControlHost::builder()
-        .with_control(ControlHandle::new(&base))
-        .with_named_control("modals", stack.handle())
-        .with_filter(&filter)
-        .build();
-    let resp = host.deliver_event(m_down(10.0, 10.0));
-    assert_eq!(resp.target_index, Some(0), "the base gets it");
-    let mut list = DrawList::new();
-    stack.draw_overlay(&mut list, &DrawContext::default());
-    stack.draw(&mut list, &DrawContext::default());
-    assert!(list.instances.is_empty());
+    let mut env = env(instant());
+    let base = env.router.add(None, Recorder::at(0.0));
+    assert_eq!(env.modals().hit_test([10.0, 10.0]), None);
+    let resp = env.send(m_down(10.0, 10.0));
+    assert_eq!(resp.target, Some(base), "the base gets it");
+    assert!(env.render().instances.is_empty());
 }
 
 #[test]
 fn tab_in_the_base_skips_the_stack() {
-    let modals = Arc::new(instant());
-    let a = Recorder::at(0.0);
-    let b = Recorder::at(200.0);
-    let stack = ModalStack::new(Arc::clone(&modals), VIEWPORT);
-    let mut host = ControlHost::builder()
-        .with_control(ControlHandle::new(&a))
-        .with_control(ControlHandle::new(&b))
-        .with_named_control("modals", stack.handle())
-        .build();
+    let mut env = env(instant());
+    let a = env.router.add(None, Recorder::at(0.0));
+    let b = env.router.add(None, Recorder::at(200.0));
     let mut seen = Vec::new();
     for _ in 0..3 {
-        host.deliver_event(k(Key::Tab));
-        seen.push(host.focused_index());
+        env.send(k(Key::Tab));
+        seen.push(env.router.focused());
     }
-    assert_eq!(
-        seen,
-        [Some(0), Some(1), Some(0)],
-        "never index 2, the stack"
-    );
+    assert_eq!(seen, [Some(a), Some(b), Some(a)], "never the stack");
 }
 
 #[test]
 fn base_controls_receive_nothing_while_any_modal_exists() {
-    let modals = driven();
-    let filter = modals.filter("modals");
-    let base = rec(240.0, 200.0);
-    modals.push("lower");
+    let mut env = env(driven());
+    let base = env.router.add(None, rec(240.0, 200.0));
+    env.router.push_modal("lower", lower()).unwrap();
     for phase in [ModalPhase::Opening, ModalPhase::Open, ModalPhase::Closing] {
         match phase {
-            ModalPhase::Open => modals.set_progress("lower", 1.0),
-            ModalPhase::Closing => modals.pop(),
+            ModalPhase::Open => env.state.set_progress("lower", 1.0),
+            ModalPhase::Closing => env.state.pop(),
             _ => {}
         }
-        let stack = ModalStack::new(Arc::clone(&modals), VIEWPORT).with_modal(lower(&modals));
-        let mut host = ControlHost::builder()
-            .with_control(ControlHandle::new(&base))
-            .with_named_control("modals", stack.handle())
-            .with_filter(&filter)
-            .build();
+        env.render();
         for event in [
             m_down(250.0, 210.0),
             m_up(250.0, 210.0),
             k(Key::Enter),
             InputEvent::Gesture(GestureEvent::DoubleTap),
         ] {
-            host.deliver_event(event);
+            env.send(event);
         }
-        assert_eq!(handler_calls(&base), 0, "{phase:?}");
+        assert_eq!(handler_calls(env.app(base).take()), 0, "{phase:?}");
     }
 }
 
+/// Plan 03 let the base hover and grab go on the first redirected event;
+/// now they go when the layer is pushed.
 #[test]
 fn base_hover_is_left_and_a_base_grab_dropped_on_the_first_redirected_event() {
-    let modals = Arc::new(instant());
-    let filter = modals.filter("modals");
-    let base = rec(240.0, 200.0);
-    let stack = ModalStack::new(Arc::clone(&modals), VIEWPORT);
-    let mut host = ControlHost::builder()
-        .with_control(ControlHandle::new(&base))
-        .with_named_control("modals", stack.handle())
-        .with_filter(&filter)
-        .build();
-    host.deliver_event(m_move(250.0, 210.0));
-    host.deliver_event(m_down(250.0, 210.0));
-    assert!(host.active_drag().is_some());
-    base.take();
-    modals.push("lower");
-    host.deliver_event(m_drag(260.0, 210.0));
-    assert_eq!(base.take(), [Call::Hover(None)], "left, and nothing else");
-    assert_eq!(host.active_drag(), None, "the base grab is dropped");
+    let mut env = env(instant());
+    let base = env.router.add(None, rec(240.0, 200.0));
+    env.send(m_move(250.0, 210.0));
+    env.send(m_down(250.0, 210.0));
+    assert!(env.router.active_drag().is_some());
+    env.app(base).take();
+    env.router.push_modal("lower", lower()).unwrap();
+    assert_eq!(env.router.active_drag(), None, "the base grab is dropped");
+    env.send(m_drag(260.0, 210.0));
+    assert_eq!(
+        env.app(base).take(),
+        [Call::Hover(None)],
+        "left, and nothing else"
+    );
+    assert_eq!(env.router.active_drag(), None);
 }
 
 #[test]
 fn base_focus_is_unchanged_after_a_modal_closes() {
-    let modals = Arc::new(instant());
-    let filter = modals.filter("modals");
-    let a = Recorder::at(0.0);
-    let b = Recorder::at(200.0);
-    let stack = ModalStack::new(Arc::clone(&modals), VIEWPORT);
-    let mut host = ControlHost::builder()
-        .with_control(ControlHandle::new(&a))
-        .with_control(ControlHandle::new(&b))
-        .with_named_control("modals", stack.handle())
-        .with_filter(&filter)
-        .build();
-    host.set_focused_index(Some(1));
-    b.take();
-    modals.push("lower");
-    host.deliver_event(k(Key::Tab));
-    host.deliver_event(k(Key::Escape));
-    modals.dismiss_all(DismissReason::App);
-    assert_eq!(host.focused_index(), Some(1));
+    let mut env = env(instant());
+    let a = env.router.add(None, Recorder::at(0.0));
+    let b = env.router.add(None, Recorder::at(200.0));
+    env.router.set_focus(Some(b));
+    env.app(b).take();
+    env.push("lower").unwrap();
+    env.send(k(Key::Tab));
+    env.send(k(Key::Escape));
+    env.state.dismiss_all(DismissReason::App);
+    assert_eq!(env.router.focused(), Some(b));
     assert!(
-        a.focus().is_empty() && b.focus().is_empty(),
+        env.app(a).focus().is_empty() && env.app(b).focus().is_empty(),
         "no focus event at all"
     );
 }
 
 #[test]
 fn lower_modals_receive_nothing_and_lose_their_hover() {
-    let modals = Arc::new(instant());
-    let filter = modals.filter("modals");
-    let content = rec(220.0, 180.0);
-    modals.push("lower");
-    {
-        let stack = ModalStack::new(Arc::clone(&modals), VIEWPORT)
-            .with_modal(lower(&modals).with_control(ControlHandle::new(&content)));
-        let mut host = ControlHost::builder()
-            .with_named_control("modals", stack.handle())
-            .with_filter(&filter)
-            .build();
-        host.deliver_event(m_move(230.0, 190.0));
-    }
-    assert_eq!(content.hovers(), [Some(ControlPart::Body)]);
-    modals.push("upper");
-    let stack = ModalStack::new(Arc::clone(&modals), VIEWPORT)
-        .with_modal(lower(&modals).with_control(ControlHandle::new(&content)))
-        .with_modal(upper(&modals));
-    let mut host = ControlHost::builder()
-        .with_named_control("modals", stack.handle())
-        .with_filter(&filter)
-        .build();
-    host.deliver_event(m_move(235.0, 190.0));
-    host.deliver_event(k(Key::Enter));
-    let calls = content.take();
+    let mut env = env(instant());
+    let mut first = lower();
+    let content = first.content_mut().add(None, rec(220.0, 180.0));
+    env.router.push_modal("lower", first).unwrap();
+    env.send(m_move(230.0, 190.0));
     assert_eq!(
-        calls,
+        env.content_rec("lower", content, Recorder::hovers),
+        [Some(ControlPart::Body)]
+    );
+    env.router.push_modal("upper", upper()).unwrap();
+    env.send(m_move(235.0, 190.0));
+    env.send(k(Key::Enter));
+    assert_eq!(
+        env.content_rec("lower", content, Recorder::take),
         [Call::Hover(None)],
         "loses its hover, receives nothing"
     );
@@ -1339,154 +1588,113 @@ fn lower_modals_receive_nothing_and_lose_their_hover() {
 #[test]
 fn escape_and_back_close_only_the_top() {
     for key in [Key::Escape, Key::Back] {
-        let modals = Arc::new(instant());
-        let filter = modals.filter("modals");
-        modals.push("lower");
-        modals.push("upper");
-        modals.take_events();
-        let stack = ModalStack::new(Arc::clone(&modals), VIEWPORT)
-            .with_modal(lower(&modals))
-            .with_modal(upper(&modals));
-        let mut host = ControlHost::builder()
-            .with_named_control("modals", stack.handle())
-            .with_filter(&filter)
-            .build();
-        host.deliver_event(k(key));
-        assert!(!modals.contains("upper"), "{key:?} closes the top");
-        assert!(modals.contains("lower"), "{key:?} leaves the one below");
+        let mut env = env(instant());
+        env.router.push_modal("lower", lower()).unwrap();
+        env.router.push_modal("upper", upper()).unwrap();
+        env.state.take_events();
+        env.send(k(key));
+        assert!(!env.state.contains("upper"), "{key:?} closes the top");
+        assert!(env.state.contains("lower"), "{key:?} leaves the one below");
     }
 }
 
 #[test]
 fn a_tap_on_a_lower_modal_is_outside_the_top() {
-    let modals = Arc::new(instant());
-    let filter = modals.filter("modals");
-    modals.push("lower");
-    modals.push("upper");
-    let stack = ModalStack::new(Arc::clone(&modals), VIEWPORT)
-        .with_modal(lower(&modals))
-        .with_modal(upper(&modals));
-    let mut host = ControlHost::builder()
-        .with_named_control("modals", stack.handle())
-        .with_filter(&filter)
-        .build();
-    host.deliver_event(m_down(220.0, 170.0));
-    host.deliver_event(m_up(220.0, 170.0));
+    let mut env = env(instant());
+    env.router.push_modal("lower", lower()).unwrap();
+    env.router.push_modal("upper", upper()).unwrap();
+    env.send(m_down(220.0, 170.0));
+    env.send(m_up(220.0, 170.0));
     assert!(
-        !modals.contains("upper"),
+        !env.state.contains("upper"),
         "a tap on the lower frame closes the top"
     );
-    assert!(modals.contains("lower"));
+    assert!(env.state.contains("lower"));
 }
 
+/// Plan 03 kept each entry's focus in the entry across rebuilds; now each
+/// dialog's content router keeps its own.
 #[test]
 fn focus_is_kept_per_entry() {
-    let modals = Arc::new(instant());
-    let filter = modals.filter("modals");
-    let a = rec(220.0, 180.0);
-    let b = rec(300.0, 180.0);
-    let build_and_send = |event: InputEvent| {
-        let mut stack = ModalStack::new(Arc::clone(&modals), VIEWPORT).with_modal(
-            lower(&modals)
-                .with_control(ControlHandle::new(&a))
-                .with_control(ControlHandle::new(&b)),
-        );
-        if modals.contains("upper") {
-            stack = stack.with_modal(upper(&modals));
-        }
-        let mut host = ControlHost::builder()
-            .with_named_control("modals", stack.handle())
-            .with_filter(&filter)
-            .build();
-        host.deliver_event(event);
-    };
-    modals.push("lower");
-    build_and_send(k(Key::Tab));
-    build_and_send(k(Key::Tab));
-    modals.push("upper");
-    build_and_send(k(Key::Tab));
-    modals.pop();
-    a.take();
-    b.take();
-    build_and_send(k(Key::Enter));
+    let mut env = env(instant());
+    let mut first = lower();
+    let a = first.content_mut().add(None, rec(220.0, 180.0));
+    let b = first.content_mut().add(None, rec(300.0, 180.0));
+    env.router.push_modal("lower", first).unwrap();
+    env.send(k(Key::Tab));
+    env.send(k(Key::Tab));
+    env.router.push_modal("upper", upper()).unwrap();
+    env.send(k(Key::Tab));
+    env.state.pop();
+    env.content_rec("lower", a, Recorder::take);
+    env.content_rec("lower", b, Recorder::take);
+    env.send(k(Key::Enter));
     assert!(
-        b.take().iter().any(|c| matches!(c, Call::Key(..))),
+        env.content_rec("lower", b, Recorder::take)
+            .iter()
+            .any(|c| matches!(c, Call::Key(..))),
         "the lower modal's focus is where it was: on b"
     );
 }
 
+/// There is no build order any more: layers draw in the order of their
+/// entries, even when a queued push lands its layer later.
 #[test]
 fn modals_are_ordered_by_the_stack_not_by_build_order() {
-    let modals = Arc::new(instant());
-    modals.push("lower");
-    modals.push("upper");
-    let stack = ModalStack::new(Arc::clone(&modals), VIEWPORT)
-        .with_modal(upper(&modals))
-        .with_modal(lower(&modals));
-    let mut list = DrawList::new();
-    stack.draw_overlay(&mut list, &DrawContext::default());
+    let mut env = env(instant());
+    env.router.push_modal("lower", lower()).unwrap();
+    env.router.push_modal("upper", upper()).unwrap();
+    let list = env.render();
     let l = position_of(&list, LOWER_BG).expect("lower drawn");
     let u = position_of(&list, UPPER_BG).expect("upper drawn");
     assert!(l < u, "the lower entry draws first");
-    assert_eq!(stack.top_modal().map(|m| m.id()), Some(sym!("upper")));
+    assert_eq!(env.state.top(), Some(sym!("upper")));
+
+    let mut env = self::env(timed());
+    env.router.push_modal("lower", lower()).unwrap();
+    env.router.push_modal("upper", upper()).unwrap();
+    env.state.advance(1.0);
+    env.state.close("lower");
+    env.router.push_modal("lower", lower()).unwrap();
+    env.state.advance(1.0);
+    assert_eq!(
+        env.state.phase("lower"),
+        ModalPhase::Opening,
+        "queued, then pushed"
+    );
+    env.state.advance(1.0);
+    let list = env.render();
+    let l = position_of(&list, LOWER_BG).expect("lower drawn");
+    let u = position_of(&list, UPPER_BG).expect("upper drawn");
+    assert!(u < l, "the re-pushed lower entry is now above upper");
+    assert_eq!(env.state.top(), Some(sym!("lower")));
 }
 
-#[test]
-fn input_is_consumed_when_the_top_has_no_modal_built() {
-    let modals = Arc::new(instant());
-    let filter = modals.filter("modals");
-    let base = rec(240.0, 200.0);
-    modals.push("unbuilt");
-    let stack = ModalStack::new(Arc::clone(&modals), VIEWPORT);
-    let mut host = ControlHost::builder()
-        .with_control(ControlHandle::new(&base))
-        .with_named_control("modals", stack.handle())
-        .with_filter(&filter)
-        .build();
-    let resp = host.deliver_event(m_down(250.0, 210.0));
-    assert_eq!(resp.target_id, Some(sym!("modals")));
-    assert_eq!(resp.action, None);
-    assert_eq!(handler_calls(&base), 0);
-}
+// `input_is_consumed_when_the_top_has_no_modal_built` is dropped: pushing
+// goes through `Router::push_modal`, so every entry has a layer and there is
+// no unbuilt top to test.
 
 #[test]
 fn the_response_names_the_stack_and_carries_the_inner_action() {
-    let modals = Arc::new(instant());
-    let filter = modals.filter("modals");
+    let mut env = env(instant());
     let ok = Button::new("OK", Rect::new(240.0, 200.0, 80.0, 30.0));
-    modals.push("lower");
-    let stack = ModalStack::new(Arc::clone(&modals), VIEWPORT)
-        .with_modal(lower(&modals).with_named_control("ok", ok.handle()));
-    let mut host = ControlHost::builder()
-        .with_named_control(sym!("modals"), stack.handle())
-        .with_filter(&filter)
-        .build();
-    let resp = host.deliver_event(m_down(250.0, 210.0));
-    assert_eq!(resp.target_id, Some(sym!("modals")));
-    assert!(matches!(
-        resp.action,
-        Some(libcontrols::ControlAction::Activated { .. })
-    ));
-    assert!(ok.state.take_click(), "the button inside was pressed");
+    let clicks = Arc::clone(&ok.state);
+    let mut first = lower();
+    first.content_mut().add(None, ok);
+    env.router.push_modal("lower", first).unwrap();
+    let resp = env.send(m_down(250.0, 210.0));
+    assert_eq!(resp.target, Some(env.stack));
+    assert!(matches!(resp.action, Some(ControlAction::Activated { .. })));
+    assert!(clicks.take_click(), "the button inside was pressed");
 }
 
 #[test]
 fn each_level_draws_its_own_backdrop_bottom_to_top() {
-    let modals = Arc::new(instant());
-    modals.push("lower");
-    modals.push("upper");
-    let stack = ModalStack::new(Arc::clone(&modals), VIEWPORT)
-        .with_modal(lower(&modals))
-        .with_modal(upper(&modals));
-    let mut list = DrawList::new();
-    stack.draw_overlay(&mut list, &DrawContext::default());
-    let backdrops: Vec<usize> = list
-        .instances
-        .iter()
-        .enumerate()
-        .filter(|(_, i)| i.size == VIEWPORT.size())
-        .map(|(n, _)| n)
-        .collect();
+    let mut env = env(instant());
+    env.router.push_modal("lower", lower()).unwrap();
+    env.router.push_modal("upper", upper()).unwrap();
+    let list = env.render();
+    let backdrops = backdrops(&list);
     assert_eq!(backdrops.len(), 2, "one backdrop per level");
     let l = position_of(&list, LOWER_BG).unwrap();
     let u = position_of(&list, UPPER_BG).unwrap();
@@ -1495,32 +1703,20 @@ fn each_level_draws_its_own_backdrop_bottom_to_top() {
 
 #[test]
 fn the_stack_draws_after_every_base_overlay() {
-    let modals = Arc::new(instant());
-    let filter = modals.filter("modals");
-    let base = Options::new(&["SV - Save"], Rect::new(10.0, 10.0, 100.0, 20.0))
+    let mut env = env(instant());
+    let grid = Options::new(&["SV - Save"], Rect::new(10.0, 10.0, 100.0, 20.0))
         .with_tooltip_style(TooltipStyle::default().with_bg(TIP_BG));
-    let button = content_button();
-    let stack = ModalStack::new(Arc::clone(&modals), VIEWPORT)
-        .with_modal(lower(&modals).with_control(button.handle()))
-        .with_modal(upper(&modals));
-    let mut host = ControlHost::builder()
-        .with_control(base.handle())
-        .with_named_control("modals", stack.handle())
-        .with_filter(&filter)
-        .build();
-    host.deliver_event(m_move(15.0, 15.0));
-    modals.push("lower");
-    modals.push("upper");
-    let mut list = DrawList::new();
-    host.draw(&mut list, &DrawContext::default());
+    let hovered = Arc::clone(&grid.state);
+    env.router.add(None, grid);
+    let mut first = lower();
+    first.content_mut().add(None, content_button());
+    env.router.push_modal("lower", first).unwrap();
+    env.router.push_modal("upper", upper()).unwrap();
+    // Pushing let the base hover go; hover the cell by hand to draw its tip.
+    hovered.set_hovered_cell(Some(0));
+    let list = env.render();
     let tip = position_of(&list, TIP_BG).expect("the base overlay is drawn");
-    let backdrops: Vec<usize> = list
-        .instances
-        .iter()
-        .enumerate()
-        .filter(|(_, i)| i.size == VIEWPORT.size())
-        .map(|(n, _)| n)
-        .collect();
+    let backdrops = backdrops(&list);
     let l = position_of(&list, LOWER_BG).unwrap();
     let content = position_of(&list, BUTTON_BG).unwrap();
     let u = position_of(&list, UPPER_BG).unwrap();
@@ -1535,89 +1731,78 @@ fn the_stack_draws_after_every_base_overlay() {
     );
 
     // A hovered base recorder under the same two modals.
-    let watcher = rec(500.0, 500.0);
-    let stack = ModalStack::new(Arc::clone(&modals), VIEWPORT)
-        .with_modal(lower(&modals))
-        .with_modal(upper(&modals));
-    let mut host = ControlHost::builder()
-        .with_control(ControlHandle::new(&watcher))
-        .with_named_control("modals", stack.handle())
-        .with_filter(&filter)
-        .build();
-    host.set_hovered_key(Some(ControlKey::at(0)));
+    let mut env = self::env(instant());
+    let watcher = env.router.add(None, rec(500.0, 500.0));
+    env.send(m_move(505.0, 505.0));
+    env.app(watcher).take();
+    env.router.push_modal("lower", lower()).unwrap();
+    env.router.push_modal("upper", upper()).unwrap();
     for event in [m_move(505.0, 505.0), m_down(505.0, 505.0), k(Key::Enter)] {
-        host.deliver_event(event);
+        env.send(event);
     }
     assert_eq!(
-        watcher.take(),
+        env.app(watcher).take(),
         [Call::Hover(None)],
         "one clear and no handler call"
     );
 }
 
+/// Plan 03 needed a host holding the stack and its filter; a router with
+/// only the installed stack works.
 #[test]
 fn a_host_with_only_a_stack_and_its_filter_works() {
-    let modals = Arc::new(instant());
-    let filter = modals.filter(sym!("modals"));
-    let close = Button::new("Close", Rect::new(240.0, 200.0, 80.0, 30.0));
-    modals.push("lower");
-    modals.take_events();
-    let stack = ModalStack::new(Arc::clone(&modals), VIEWPORT).with_modal(
-        lower(&modals)
-            .with_named_control("close", close.handle())
-            .with_close_control("close"),
+    let mut env = env(instant());
+    let mut first = lower();
+    let close = first.content_mut().add(
+        None,
+        Button::new("Close", Rect::new(240.0, 200.0, 80.0, 30.0)),
     );
-    let mut host = ControlHost::builder()
-        .with_named_control(sym!("modals"), stack.handle())
-        .with_filter(&filter)
-        .build();
-    host.deliver_event(m_down(250.0, 210.0));
-    assert_eq!(dismissed(&modals), [DismissReason::Control(sym!("close"))]);
-    assert!(!modals.captures_input());
+    env.router
+        .push_modal("lower", first.with_close_control(close))
+        .unwrap();
+    env.state.take_events();
+    assert_eq!(env.router.len(), 1, "only the stack");
+    env.send(m_down(250.0, 210.0));
+    assert_eq!(dismissed(&env.state), [DismissReason::Control(close)]);
+    assert!(!env.state.captures_input());
+    assert!(env.modals().is_empty());
 }
 
-/// The example in README.md's "Modals" section, with buttons for its controls.
+/// The README's two-level example, in the router form (plan 05, 8.6).
 #[test]
 fn the_readme_two_level_example_runs() {
     let modals = Arc::new(ModalState::new());
-    let modal_filter = modals.filter(sym!("modals"));
-    let quit = Button::new("Quit", Rect::new(220.0, 170.0, 80.0, 30.0));
-    let cancel = Button::new("Cancel", Rect::new(290.0, 260.0, 80.0, 30.0));
+    let mut router = Router::new();
+    ModalStack::install(&mut router, modals.clone(), VIEWPORT).unwrap();
     let unsaved_changes = true;
-    let send = |event: InputEvent| {
-        let mut stack = ModalStack::new(modals.clone(), VIEWPORT);
-        for entry in modals.stack() {
-            stack = stack.with_modal(if entry.id == sym!("settings") {
-                Modal::centered(modals.clone(), entry.id, VIEWPORT, [400.0, 300.0], 16.0)
-                    .with_hold_open(unsaved_changes)
-                    .with_named_control(sym!("quit"), quit.handle())
-            } else {
-                Modal::centered(modals.clone(), entry.id, VIEWPORT, [240.0, 120.0], 12.0)
-                    .with_named_control(sym!("cancel"), cancel.handle())
-                    .with_close_control(sym!("cancel"))
-            });
-        }
-        let mut host = ControlHost::builder()
-            .with_named_control(sym!("modals"), stack.handle())
-            .with_filter(&modal_filter)
-            .build();
-        host.deliver_event(event)
-    };
 
-    modals.push(sym!("settings"));
+    let mut settings = ModalDialog::centered(VIEWPORT, [400.0, 300.0], 16.0)
+        .with_options(ModalOptions::default().with_hold_open(unsaved_changes));
+    let quit = Button::new("Quit", Rect::new(220.0, 170.0, 80.0, 30.0));
+    let quit_clicks = Arc::clone(&quit.state);
+    settings.content_mut().add(None, quit);
+    router.push_modal(sym!("settings"), settings).unwrap();
     modals.advance(1.0);
-    send(m_down(230.0, 180.0));
-    assert!(quit.state.take_click(), "Quit inside settings is pressed");
-    modals.push(sym!("confirm"));
+    router.deliver_event(m_down(230.0, 180.0));
+    assert!(quit_clicks.take_click(), "Quit inside settings is pressed");
+
+    let mut confirm = ModalDialog::centered(VIEWPORT, [240.0, 120.0], 12.0);
+    let cancel = confirm.content_mut().add(
+        None,
+        Button::new("Cancel", Rect::new(290.0, 260.0, 80.0, 30.0)),
+    );
+    router
+        .push_modal(sym!("confirm"), confirm.with_close_control(cancel))
+        .unwrap();
     modals.advance(1.0);
     modals.take_events();
 
-    send(m_down(300.0, 270.0));
+    router.deliver_event(m_down(300.0, 270.0));
     assert_eq!(
         modals.take_events(),
         [ModalEvent::Dismissed {
             id: sym!("confirm"),
-            by: DismissReason::Control(sym!("cancel"))
+            by: DismissReason::Control(cancel)
         }],
         "Cancel closes the confirm"
     );
@@ -1625,7 +1810,7 @@ fn the_readme_two_level_example_runs() {
     modals.take_events();
     assert_eq!(modals.top(), Some(sym!("settings")));
 
-    send(k(Key::Escape));
+    router.deliver_event(k(Key::Escape));
     assert_eq!(
         modals.take_events(),
         [ModalEvent::DismissRefused {

@@ -5,10 +5,11 @@ use std::sync::Mutex;
 
 use libmsdf::drawlist::DrawList;
 
+use crate::control::HostedControl;
 use crate::edit::{Edit, EditState};
 use crate::event::{ControlAction, ControlPart, EventContext, KeyboardEvent, MouseEvent};
+use crate::flags::NodeState;
 use crate::handle::{ControlHandle, ReadValue};
-use crate::host::HostedControl;
 use crate::label::Label;
 use crate::rect::{Rect, TextAlign};
 use crate::ring::{GlowRingStyle, draw_glowing_ring};
@@ -327,7 +328,9 @@ impl DrawControl for SliderNumeric {
             .set_active(active_part == SliderNumericActive::Value);
         edit_clone.draw(list, ctx);
 
-        if active_part == SliderNumericActive::EntireControl {
+        if active_part == SliderNumericActive::EntireControl
+            || (active_part == SliderNumericActive::None && ctx.state.contains(NodeState::FOCUSED))
+        {
             draw_glowing_ring(list, self.rect, &glow_style, &ctx.theme);
         }
     }

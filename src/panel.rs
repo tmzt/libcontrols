@@ -1,22 +1,20 @@
 //! Structured container panel with background styling, metallic borders, headers, and active
 //! states.
 
-use std::cell::RefCell;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use libmsdf::drawlist::{DrawList, LINE_BOX_RATIO, SdfInstance, SdfKind};
 
+use crate::control::HostedControl;
 use crate::event::{
-    ControlAction, ControlPart, EventContext, EventResponse, GestureEvent, InputEvent, Key,
-    KeyboardEvent, MouseButton, MouseEvent,
+    ControlAction, ControlPart, EventContext, Key, KeyboardEvent, MouseButton, MouseEvent,
 };
+use crate::flags::NodeState;
 use crate::handle::{ControlHandle, ReadValue};
-use crate::host::{Control, ControlHost, ControlKey, DragGrab, HostedControl};
 use crate::rect::Rect;
 use crate::ring::{GlowRingStyle, draw_glowing_ring};
-use crate::symbol::Symbol;
 use crate::traits::{DrawContext, DrawControl};
 
 /// Mutable runtime state for a container panel.
@@ -112,7 +110,7 @@ impl<S: Clone> PanelData<S> {
 
 /// Container panel control with optional background, metallic border, header title, and
 /// subtitle.
-pub struct Panel<'a, S = ()> {
+pub struct Panel<S = ()> {
     /// Shared mutable panel state.
     pub state: Arc<PanelState>,
     /// Outer bounding box.
@@ -137,11 +135,10 @@ pub struct Panel<'a, S = ()> {
     pub padding: f32,
     /// Custom glowing ring style.
     pub glow_style: Option<GlowRingStyle>,
-    children: RefCell<ControlHost<'a>>,
     data: Option<Arc<PanelData<S>>>,
 }
 
-impl<'a> Panel<'a, ()> {
+impl Panel<()> {
     /// Create a new panel at the given bounds, carrying no data.
     pub fn new(rect: Rect) -> Self {
         Self {
@@ -157,13 +154,12 @@ impl<'a> Panel<'a, ()> {
             subtitle_font_size: None,
             padding: 10.0,
             glow_style: None,
-            children: RefCell::new(ControlHost::builder().build()),
             data: None,
         }
     }
 
     /// Attach the data this panel's controls edit.
-    pub fn with_data<S>(self, data: Arc<PanelData<S>>) -> Panel<'a, S> {
+    pub fn with_data<S>(self, data: Arc<PanelData<S>>) -> Panel<S> {
         Panel {
             state: self.state,
             rect: self.rect,
@@ -177,13 +173,12 @@ impl<'a> Panel<'a, ()> {
             subtitle_font_size: self.subtitle_font_size,
             padding: self.padding,
             glow_style: self.glow_style,
-            children: self.children,
             data: Some(data),
         }
     }
 }
 
-impl<'a, S> Panel<'a, S> {
+impl<S> Panel<S> {
     /// The data this panel carries, if any.
     pub fn data(&self) -> Option<&Arc<PanelData<S>>> {
         self.data.as_ref()
@@ -316,88 +311,9 @@ impl<'a, S> Panel<'a, S> {
     pub fn handle(&self) -> ControlHandle<'_, Self> {
         ControlHandle::new(self)
     }
-
-    /// Add an unnamed child control to this panel.
-    pub fn with_control<C: Control + 'a>(mut self, control: ControlHandle<'a, C>) -> Self {
-        self.children.get_mut().add_control(control);
-        self
-    }
-
-    /// Add a named child control to this panel.
-    pub fn with_named_control<C: Control + 'a>(
-        mut self,
-        id: impl Into<Symbol>,
-        control: ControlHandle<'a, C>,
-    ) -> Self {
-        self.children.get_mut().add_named_control(id, control);
-        self
-    }
-
-    /// Deliver an event to the panel's child controls.
-    pub fn deliver_event(&self, event: InputEvent) -> EventResponse {
-        self.children.borrow_mut().deliver_event(event)
-    }
-
-    /// Put a drag back in progress, from before this panel was built.
-    #[must_use]
-    pub fn with_active_drag(self, grab: Option<DragGrab>) -> Self {
-        self.children.borrow_mut().set_active_drag(grab);
-        self
-    }
-
-    /// The drag in progress, to be carried to the next build.
-    #[must_use]
-    pub fn active_drag(&self) -> Option<DragGrab> {
-        self.children.borrow().active_drag()
-    }
-
-    /// Set the initial focus within this panel's child host.
-    #[must_use]
-    pub fn with_focus(mut self, focused: Option<usize>) -> Self {
-        self.children.get_mut().set_focused_index(focused);
-        self
-    }
-
-    /// Set the initial focus by index.
-    #[must_use]
-    pub fn with_initial_focus(self, index: usize) -> Self {
-        self.with_focus(Some(index))
-    }
-
-    /// Put the focus back on the control it was on before this rebuild.
-    #[must_use]
-    pub fn with_focus_key(mut self, key: Option<ControlKey>) -> Self {
-        self.children.get_mut().set_focused_key(key);
-        self
-    }
-
-    /// Put the children's hover back after a rebuild.
-    #[must_use]
-    pub fn with_hovered_key(mut self, key: Option<ControlKey>) -> Self {
-        self.children.get_mut().set_hovered_key(key);
-        self
-    }
-
-    /// The hovered child as a key, to be carried to the next build.
-    #[must_use]
-    pub fn hovered_key(&self) -> Option<ControlKey> {
-        self.children.borrow().hovered_key()
-    }
-
-    /// The focused control as a key, to be carried to the next build.
-    #[must_use]
-    pub fn focused_key(&self) -> Option<ControlKey> {
-        self.children.borrow().focused_key()
-    }
-
-    /// Where the focused control sits in this panel, if it is still here.
-    #[must_use]
-    pub fn focused_index(&self) -> Option<usize> {
-        self.children.borrow().focused_index()
-    }
 }
 
-impl<S> DrawControl for Panel<'_, S> {
+impl<S> DrawControl for Panel<S> {
     fn draw(&self, list: &mut DrawList, ctx: &DrawContext) {
         let rad = self.corner_radius.unwrap_or(ctx.theme.corner_radius);
 
@@ -452,15 +368,18 @@ impl<S> DrawControl for Panel<'_, S> {
             ctx.draw_text(list, subtitle, [st_x, text_y], st_sz, st_col);
         }
 
-        if self.is_active() {
+        if self.is_active()
+            || ctx
+                .state
+                .intersects(NodeState::FOCUSED | NodeState::FOCUS_WITHIN)
+        {
             let style = self.glow_style.unwrap_or_default();
             draw_glowing_ring(list, self.rect, &style, &ctx.theme);
         }
-        self.children.borrow().draw(list, ctx);
     }
 }
 
-impl<S> HostedControl for Panel<'_, S> {
+impl<S> HostedControl for Panel<S> {
     fn bounds(&self) -> Rect {
         self.rect
     }
@@ -474,15 +393,6 @@ impl<S> HostedControl for Panel<'_, S> {
     }
 
     fn handle_mouse(&self, event: &MouseEvent, ctx: &EventContext) -> Option<ControlAction> {
-        let child_response = {
-            let mut children = self.children.borrow_mut();
-            children.set_modifiers(ctx.modifiers);
-            children.deliver_event(InputEvent::Mouse(*event))
-        };
-        if child_response.handled {
-            return child_response.action;
-        }
-
         match event {
             MouseEvent::Click {
                 button: MouseButton::Left,
@@ -496,22 +406,7 @@ impl<S> HostedControl for Panel<'_, S> {
         }
     }
 
-    fn handle_gesture(&self, event: &GestureEvent, ctx: &EventContext) -> Option<ControlAction> {
-        let mut children = self.children.borrow_mut();
-        children.set_modifiers(ctx.modifiers);
-        children.deliver_event(InputEvent::Gesture(*event)).action
-    }
-
-    fn handle_keyboard(&self, event: &KeyboardEvent, ctx: &EventContext) -> Option<ControlAction> {
-        let child_response = {
-            let mut children = self.children.borrow_mut();
-            children.set_modifiers(ctx.modifiers);
-            children.deliver_event(InputEvent::Keyboard(*event))
-        };
-        if child_response.handled {
-            return child_response.action;
-        }
-
+    fn handle_keyboard(&self, event: &KeyboardEvent, _ctx: &EventContext) -> Option<ControlAction> {
         if event.is_down()
             && let Some(Key::Enter | Key::Space) = event.key()
         {
@@ -523,7 +418,7 @@ impl<S> HostedControl for Panel<'_, S> {
     }
 }
 
-impl<S> ReadValue<String> for Panel<'_, S> {
+impl<S> ReadValue<String> for Panel<S> {
     fn read_value(&self) -> String {
         self.title().unwrap_or_default()
     }

@@ -4,10 +4,12 @@
 
 pub mod arrow_label;
 pub mod button;
+pub mod control;
 pub mod edit;
 pub mod event;
+pub mod filter;
+pub mod flags;
 pub mod handle;
-pub mod host;
 pub mod label;
 pub mod modal;
 pub mod options;
@@ -15,6 +17,7 @@ pub mod panel;
 pub mod radio;
 pub mod rect;
 pub mod ring;
+pub mod router;
 pub mod selectable_label;
 pub mod slider;
 pub mod slider_numeric;
@@ -25,27 +28,28 @@ pub mod traits;
 
 pub use arrow_label::{ArrowLabel, ArrowLabelActive, ArrowLabelState};
 pub use button::{Button, ButtonState};
+pub use control::{Control, HostedControl};
 pub use edit::{Edit, EditState};
 pub use event::{
-    ControlAction, ControlHit, ControlPart, EventContext, EventResponse, FilterContext, Filtered,
-    FocusEvent, GestureEvent, InputEvent, Key, KeyState, KeyboardEvent, Modifiers, MouseButton,
-    MouseEvent,
+    ControlAction, ControlPart, EventContext, FocusEvent, GestureEvent, InputEvent, Key, KeyState,
+    KeyboardEvent, Modifiers, MouseButton, MouseEvent,
 };
+pub use filter::{FilterContext, FilterStack, Filtered, InputFilter};
+pub use flags::{NodeFlags, NodeState};
 pub use handle::{ControlHandle, ReadValue};
-pub use host::{
-    Control, ControlHost, ControlHostBuilder, ControlKey, DragGrab, HostedControl, InputFilter,
-};
 pub use label::{Label, LabelState};
 pub use modal::{
-    Backdrop, ContentReveal, DismissOn, DismissReason, MAX_MODAL_DEPTH, Modal, ModalEntryView,
-    ModalEvent, ModalFilter, ModalFrame, ModalPhase, ModalStack, ModalState, ModalTransition,
-    ModalView, PanelFrame,
+    Backdrop, ContentReveal, DismissOn, DismissReason, LayerContext, LayerFilter, LayerMask,
+    LayerShape, LayerView, Modal, ModalDialog, ModalEntryView, ModalError, ModalEvent, ModalFrame,
+    ModalLayerFilter, ModalOptions, ModalPhase, ModalStack, ModalState, ModalTransition, ModalView,
+    PanelFrame, ShapedLayerFilter,
 };
 pub use options::{DEFAULT_PER_ROW, DEFAULT_ROW_GAP, MAX_OPTIONS, Options, OptionsState};
 pub use panel::{Panel, PanelData, PanelState};
 pub use radio::{DEFAULT_CELL_GAP, DEFAULT_CELL_WIDTH, NO_CELL, Radio, RadioState};
 pub use rect::{Rect, TextAlign};
 pub use ring::{GlowRingStyle, draw_glowing_ring};
+pub use router::{DragGrab, EventResponse, NameError, NodeId, ParseNodeIdError, Router};
 pub use selectable_label::{SelectableLabel, SelectableLabelState};
 pub use slider::{Slider, SliderState, ThumbStyle};
 pub use slider_numeric::{NumericFormat, SliderNumeric, SliderNumericActive, SliderNumericState};
@@ -102,16 +106,16 @@ mod tests {
         btn.draw(&mut list, &ctx);
         assert!(list.instances.len() >= 3);
 
-        let mut host = ControlHost::builder()
-            .with_named_control("toggle_btn", btn.handle())
-            .build();
+        let mut router = Router::new();
+        let toggle = router.add_named(None, "toggle_btn", btn.clone()).unwrap();
+        assert_eq!(router.find("toggle_btn"), Some(toggle));
 
-        let click_resp = host.deliver_mouse(MouseEvent::Click {
+        let click_resp = router.deliver_mouse(MouseEvent::Click {
             pos: [30.0, 20.0],
             button: MouseButton::Left,
         });
         assert!(click_resp.handled);
-        assert_eq!(click_resp.target_id.as_deref(), Some("toggle_btn"));
+        assert_eq!(click_resp.target, Some(toggle));
         assert_eq!(
             click_resp.action,
             Some(ControlAction::Activated {
@@ -215,17 +219,16 @@ mod tests {
             .count();
         assert_eq!(outlines, 9, "seven cell borders and the two glow rings");
 
-        let mut host = ControlHost::builder()
-            .with_named_control("wear", options.handle())
-            .build();
+        let mut router = Router::new();
+        let wear = router.add_named(None, "wear", options.clone()).unwrap();
 
         for (pos, index) in [([90.0, 29.0], 2u32), ([20.0, 50.0], 5)] {
-            let pressed = host.deliver_mouse(MouseEvent::Click {
+            let pressed = router.deliver_mouse(MouseEvent::Click {
                 pos,
                 button: MouseButton::Left,
             });
             assert!(pressed.handled, "cell {index} must take the click");
-            assert_eq!(pressed.target_id.as_deref(), Some("wear"));
+            assert_eq!(pressed.target, Some(wear));
             assert_eq!(pressed.target_part, Some(ControlPart::Custom(index)));
         }
         assert_eq!(options.bits(), 0b10_0100, "cells 2 and 5, independently");
@@ -237,7 +240,7 @@ mod tests {
         assert_eq!(bits, 0b10_0100);
         assert_eq!((cursor, label), (5, "UN"), "the cursor follows the press");
 
-        host.deliver_mouse(MouseEvent::Click {
+        router.deliver_mouse(MouseEvent::Click {
             pos: [90.0, 29.0],
             button: MouseButton::Left,
         });
@@ -249,10 +252,9 @@ mod tests {
         const CELLS: &[&str] = &["NW", "OP", "SV", "PR", "CL", "UN", "RE"];
 
         let options = Options::new(CELLS, Rect::new(0.0, 0.0, 300.0, 18.0));
-        let mut host = ControlHost::builder()
-            .with_named_control("wear", options.handle())
-            .build();
-        host.set_focused_index(Some(0));
+        let mut router = Router::new();
+        let wear = router.add_named(None, "wear", options.clone()).unwrap();
+        router.set_focus(Some(wear));
 
         let key = |key: Key| KeyboardEvent::KeyDown { key };
         for (press, at) in [
@@ -262,19 +264,19 @@ mod tests {
             (Key::Right, 2),
             (Key::Left, 1),
         ] {
-            assert!(host.deliver_keyboard(key(press)).handled);
+            assert!(router.deliver_keyboard(key(press)).handled);
             assert_eq!(options.cursor(), at, "{press:?} must step to {at}");
             assert_eq!(options.bits(), 0, "stepping lights nothing");
         }
 
         options.set_cursor(0);
         for press in [Key::Left, Key::Up] {
-            assert_eq!(host.deliver_keyboard(key(press)).action, None);
+            assert_eq!(router.deliver_keyboard(key(press)).action, None);
             assert_eq!(options.cursor(), 0, "{press:?} must stop at the start");
         }
         options.set_cursor(CELLS.len() - 1);
         for press in [Key::Right, Key::Down] {
-            assert_eq!(host.deliver_keyboard(key(press)).action, None);
+            assert_eq!(router.deliver_keyboard(key(press)).action, None);
             assert_eq!(
                 options.cursor(),
                 CELLS.len() - 1,
@@ -283,7 +285,7 @@ mod tests {
         }
 
         for bits in [1u32 << (CELLS.len() - 1), 0] {
-            assert!(host.deliver_keyboard(key(Key::Enter)).handled);
+            assert!(router.deliver_keyboard(key(Key::Enter)).handled);
             assert_eq!(options.bits(), bits);
         }
     }
@@ -325,16 +327,15 @@ mod tests {
             .count();
         assert_eq!(outlines, 8, "six cell borders and the two glow rings");
 
-        let mut host = ControlHost::builder()
-            .with_named_control("tabs", radio.handle())
-            .build();
+        let mut router = Router::new();
+        let tabs = router.add_named(None, "tabs", radio.clone()).unwrap();
 
-        let pressed = host.deliver_mouse(MouseEvent::Click {
+        let pressed = router.deliver_mouse(MouseEvent::Click {
             pos: [90.0, 29.0],
             button: MouseButton::Left,
         });
         assert!(pressed.handled);
-        assert_eq!(pressed.target_id.as_deref(), Some("tabs"));
+        assert_eq!(pressed.target, Some(tabs));
         assert_eq!(pressed.target_part, Some(ControlPart::Custom(2)));
         assert_eq!(
             pressed.action,
@@ -356,16 +357,17 @@ mod tests {
         const CELLS: &[&str] = &["CS", "HD", "AR", "LG", "PS", "DM"];
 
         let radio = Radio::new(CELLS, Rect::new(10.0, 20.0, 300.0, 18.0)).with_selected_index(3);
-        let mut host = ControlHost::builder().with_control(radio.handle()).build();
+        let mut router = Router::new();
+        router.add(None, radio.clone());
 
-        let gap = host.deliver_mouse(MouseEvent::Click {
+        let gap = router.deliver_mouse(MouseEvent::Click {
             pos: [41.5, 29.0],
             button: MouseButton::Left,
         });
         assert!(!gap.handled, "the gap between two cells is not a cell");
 
         assert!(radio.bounds().contains([250.0, 29.0]));
-        let blank = host.deliver_mouse(MouseEvent::Click {
+        let blank = router.deliver_mouse(MouseEvent::Click {
             pos: [250.0, 29.0],
             button: MouseButton::Left,
         });
@@ -382,12 +384,11 @@ mod tests {
         const CELLS: &[&str] = &["CS", "HD", "AR"];
 
         let radio = Radio::new(CELLS, Rect::new(0.0, 0.0, 200.0, 18.0));
-        let mut host = ControlHost::builder()
-            .with_control(radio.handle())
-            .with_initial_focus(0)
-            .build();
+        let mut router = Router::new();
+        let id = router.add(None, radio.clone());
+        router.set_focus(Some(id));
 
-        let stop_left = host.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Left });
+        let stop_left = router.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Left });
         assert!(
             stop_left.action.is_none(),
             "the first cell has nothing to its left"
@@ -395,24 +396,24 @@ mod tests {
         assert_eq!(radio.selected_index(), 0);
 
         for expected in 1..=2 {
-            let step = host.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Right });
+            let step = router.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Right });
             assert!(step.handled);
             assert_eq!(step.action, Some(ControlAction::StepRight));
             assert_eq!(radio.selected_index(), expected);
         }
 
-        let stop_right = host.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Right });
+        let stop_right = router.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Right });
         assert!(
             stop_right.action.is_none(),
             "the last cell has nothing to its right"
         );
         assert_eq!(radio.selected_index(), 2);
 
-        let back = host.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Left });
+        let back = router.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Left });
         assert_eq!(back.action, Some(ControlAction::StepLeft));
         assert_eq!(radio.selected_index(), 1);
 
-        let space = host.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Space });
+        let space = router.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Space });
         assert_eq!(
             space.action,
             Some(ControlAction::Activated {
@@ -431,8 +432,9 @@ mod tests {
             .with_state(Arc::clone(&state))
             .with_cells(40.0, 4.0);
 
-        let mut host = ControlHost::builder().with_control(radio.handle()).build();
-        host.deliver_mouse(MouseEvent::Click {
+        let mut router = Router::new();
+        router.add(None, radio);
+        router.deliver_mouse(MouseEvent::Click {
             pos: [60.0, 9.0],
             button: MouseButton::Left,
         });
@@ -480,7 +482,7 @@ mod tests {
     }
 
     #[test]
-    fn control_host_builder_and_mouse_event_delivery() {
+    fn router_add_and_mouse_event_delivery() {
         let label = Label::new("Settings", Rect::new(10.0, 10.0, 300.0, 40.0));
         let sel = SelectableLabel::from_static(
             &["Option A", "Option B", "Option C"],
@@ -491,32 +493,31 @@ mod tests {
         let num_slider = SliderNumeric::new(1.20, 0.5, 2.0, Rect::new(10.0, 150.0, 300.0, 32.0))
             .with_label("Scale");
 
-        let mut host = ControlHost::builder()
-            .with_named_control("title", label.handle())
-            .with_named_control("mode_select", sel.handle())
-            .with_named_control("volume_slider", slider.handle())
-            .with_named_control("scale_slider", num_slider.handle())
-            .build();
+        let mut router = Router::new();
+        router.add_named(None, "title", label).unwrap();
+        let mode_select = router.add_named(None, "mode_select", sel).unwrap();
+        let volume_slider = router.add_named(None, "volume_slider", slider).unwrap();
+        router.add_named(None, "scale_slider", num_slider).unwrap();
 
-        assert_eq!(host.control_count(), 4);
-        assert_eq!(host.find_by_id("volume_slider"), Some(2));
+        assert_eq!(router.len(), 4);
+        assert_eq!(router.find("volume_slider"), Some(volume_slider));
 
-        let resp_left = host.deliver_mouse(MouseEvent::Click {
+        let resp_left = router.deliver_mouse(MouseEvent::Click {
             pos: [15.0, 70.0],
             button: MouseButton::Left,
         });
         assert!(resp_left.handled);
-        assert_eq!(resp_left.target_id.as_deref(), Some("mode_select"));
+        assert_eq!(resp_left.target, Some(mode_select));
         assert_eq!(resp_left.target_part, Some(ControlPart::LeftArrow));
         assert_eq!(resp_left.action, Some(ControlAction::StepLeft));
-        assert_eq!(host.focused_index(), Some(1));
+        assert_eq!(router.focused(), Some(mode_select));
 
-        let resp_slider = host.deliver_mouse(MouseEvent::Click {
+        let resp_slider = router.deliver_mouse(MouseEvent::Click {
             pos: [235.0, 120.0],
             button: MouseButton::Left,
         });
         assert!(resp_slider.handled);
-        assert_eq!(resp_slider.target_id.as_deref(), Some("volume_slider"));
+        assert_eq!(resp_slider.target, Some(volume_slider));
         if let Some(ControlAction::ValueChange {
             new_value,
             fraction,
@@ -527,44 +528,42 @@ mod tests {
         } else {
             panic!("Expected ValueChange action for slider click");
         }
-        assert_eq!(host.focused_index(), Some(2));
+        assert_eq!(router.focused(), Some(volume_slider));
 
-        let resp_outside = host.deliver_mouse(MouseEvent::Click {
+        let resp_outside = router.deliver_mouse(MouseEvent::Click {
             pos: [400.0, 400.0],
             button: MouseButton::Left,
         });
         assert!(!resp_outside.handled);
-        assert_eq!(host.focused_index(), None);
+        assert_eq!(router.focused(), None);
     }
 
     #[test]
-    fn a_drag_keeps_hold_of_its_slider_across_a_rebuild() {
+    fn a_drag_keeps_hold_of_its_slider_across_frames() {
         let top = Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 0.0, 200.0, 20.0));
         let below = Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 30.0, 200.0, 20.0));
 
-        let mut host = ControlHost::builder()
-            .with_control(top.handle())
-            .with_control(below.handle())
-            .build();
+        let mut router = Router::new();
+        let top_id = router.add(None, top.clone());
+        router.add(None, below.clone());
 
-        let down = host.deliver_mouse(MouseEvent::Down {
+        let down = router.deliver_mouse(MouseEvent::Down {
             pos: [20.0, 10.0],
             button: MouseButton::Left,
         });
-        assert_eq!(down.target_index, Some(0), "the press lands on the top one");
-        let grab = host.active_drag().expect("the press must grab it");
+        assert_eq!(down.target, Some(top_id), "the press lands on the top one");
+        let grab = router.active_drag().expect("the press must grab it");
+        assert_eq!(grab.node, top_id);
 
-        let mut next = ControlHost::builder()
-            .with_control(top.handle())
-            .with_control(below.handle())
-            .build();
-        next.set_active_drag(Some(grab));
-        assert!(next.active_drag().is_some(), "the grab must be put back");
+        // A frame goes by: the router persists, and so does its grab.
+        let mut list = DrawList::new();
+        router.render(&mut list, &DrawContext::default());
+        assert_eq!(router.active_drag(), Some(grab), "the grab must survive");
 
-        let moved = next.deliver_mouse(MouseEvent::Move { pos: [180.0, 38.0] });
+        let moved = router.deliver_mouse(MouseEvent::Move { pos: [180.0, 38.0] });
         assert_eq!(
-            moved.target_index,
-            Some(0),
+            moved.target,
+            Some(top_id),
             "the drag keeps the slider it grabbed, not the one under the pointer",
         );
         assert!(top.value() > 0.8, "and the one it grabbed is what moved");
@@ -573,24 +572,23 @@ mod tests {
             "the one it wandered over must not have moved at all",
         );
 
-        next.deliver_mouse(MouseEvent::Up {
+        router.deliver_mouse(MouseEvent::Up {
             pos: [180.0, 38.0],
             button: MouseButton::Left,
         });
-        assert!(next.active_drag().is_none(), "the release must let go");
+        assert!(router.active_drag().is_none(), "the release must let go");
     }
 
     #[test]
     fn sweeping_across_sliders_with_nothing_grabbed_moves_none_of_them() {
         let top = Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 0.0, 200.0, 20.0));
         let below = Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 30.0, 200.0, 20.0));
-        let mut host = ControlHost::builder()
-            .with_control(top.handle())
-            .with_control(below.handle())
-            .build();
+        let mut router = Router::new();
+        router.add(None, top.clone());
+        router.add(None, below.clone());
 
-        host.deliver_mouse(MouseEvent::Move { pos: [190.0, 10.0] });
-        host.deliver_mouse(MouseEvent::Move { pos: [190.0, 38.0] });
+        router.deliver_mouse(MouseEvent::Move { pos: [190.0, 10.0] });
+        router.deliver_mouse(MouseEvent::Move { pos: [190.0, 38.0] });
         assert_eq!(
             top.value(),
             0.5,
@@ -600,15 +598,21 @@ mod tests {
     }
 
     #[test]
-    fn a_cleared_focus_stays_cleared_across_a_rebuild() {
-        let one = Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 0.0, 200.0, 20.0));
-        let two = Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 30.0, 200.0, 20.0));
-        let panel = Panel::new(Rect::new(0.0, 0.0, 200.0, 60.0))
-            .with_control(one.handle())
-            .with_control(two.handle())
-            .with_focus(None);
+    fn a_cleared_focus_stays_cleared() {
+        let mut router = Router::new();
+        let panel = router.add(None, Panel::new(Rect::new(0.0, 0.0, 200.0, 60.0)));
+        let one = router.add(
+            Some(panel),
+            Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 0.0, 200.0, 20.0)),
+        );
+        router.add(
+            Some(panel),
+            Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 30.0, 200.0, 20.0)),
+        );
+        router.set_focus(Some(one));
+        router.set_focus(None);
         assert!(
-            !panel
+            !router
                 .deliver_event(InputEvent::Keyboard(KeyboardEvent::KeyDown {
                     key: Key::Space
                 }))
@@ -619,27 +623,37 @@ mod tests {
 
     #[test]
     fn escape_reports_that_it_cleared_the_focus() {
-        let only = Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 0.0, 200.0, 20.0));
-        let mut host = ControlHost::builder()
-            .with_control(only.handle())
-            .with_initial_focus(0)
-            .build();
-        let escaped = host.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Escape });
+        let mut router = Router::new();
+        let only = router.add(
+            None,
+            Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 0.0, 200.0, 20.0)),
+        );
+        router.set_focus(Some(only));
+        assert_eq!(router.focused(), Some(only));
+        let escaped = router.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Escape });
         assert!(escaped.handled, "the clear must be reported");
-        assert_eq!(escaped.focused_index, None);
-        assert_eq!(host.focused_index(), None);
+        assert_eq!(escaped.focused, None);
+        assert_eq!(router.focused(), None);
     }
 
     #[test]
     fn a_drag_grab_naming_a_control_that_is_gone_is_dropped() {
-        let only = Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 0.0, 200.0, 20.0));
-        let mut host = ControlHost::builder().with_control(only.handle()).build();
-        host.set_active_drag(Some(DragGrab::new(
-            ControlKey::at(7),
-            [0.0, 0.0],
-            MouseButton::Left,
-        )));
-        assert!(host.active_drag().is_none(), "a grab on nothing is no grab");
+        let mut router = Router::new();
+        let only = router.add(
+            None,
+            Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 0.0, 200.0, 20.0)),
+        );
+        router.deliver_mouse(MouseEvent::Down {
+            pos: [20.0, 10.0],
+            button: MouseButton::Left,
+        });
+        assert_eq!(router.active_drag().map(|g| g.node), Some(only));
+
+        router.remove(only);
+        assert!(
+            router.active_drag().is_none(),
+            "a grab on nothing is no grab"
+        );
     }
 
     #[test]
@@ -648,30 +662,31 @@ mod tests {
         let leg = Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 0.0, 200.0, 20.0));
         let tab = Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 30.0, 200.0, 20.0));
 
-        let mut open = ControlHost::builder()
-            .with_named_control("tab", tab.handle())
-            .with_named_control("level_slider", level.handle())
-            .build();
-        open.set_focused_index(Some(1));
-        let carried = open.focused_key().expect("the focus must be carried");
+        let mut router = Router::new();
+        router.add_named(None, "tab", tab).unwrap();
+        let level_id = router.add_named(None, "level_slider", level).unwrap();
+        router.set_focus(Some(level_id));
+        assert_eq!(router.focused(), Some(level_id));
 
-        let mut next = ControlHost::builder()
-            .with_named_control("tab", tab.handle())
-            .with_named_control("leg_slider", leg.handle())
-            .build();
-        next.set_focused_key(Some(carried));
+        router.remove(level_id);
         assert_eq!(
-            next.focused_index(),
+            router.focused(),
             None,
             "the control the focus named is gone, so the focus is gone with it",
         );
 
-        next.set_focused_key(Some(ControlKey::at(1)));
+        // The successor may take the removed node's slot, never its id.
+        let leg_id = router.add_named(None, "leg_slider", leg).unwrap();
+        assert_ne!(leg_id, level_id);
+        assert_eq!(router.focused(), None, "the successor is not focused");
+        router.set_focus(Some(level_id));
         assert_eq!(
-            next.focused_index(),
-            Some(1),
-            "a place is a place, and something else is standing in it",
+            router.focused(),
+            None,
+            "an old id names nothing, not whatever stands in its place",
         );
+        // The rebuild-era "a place is a place" half is gone: the router has
+        // no positional keys.
     }
 
     #[test]
@@ -680,77 +695,63 @@ mod tests {
         let leg = Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 0.0, 200.0, 20.0));
         let tab = Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 30.0, 200.0, 20.0));
 
-        let mut open = ControlHost::builder()
-            .with_named_control("tab", tab.handle())
-            .with_named_control("level_slider", level.handle())
-            .build();
-        let down = open.deliver_mouse(MouseEvent::Down {
+        let mut router = Router::new();
+        router.add_named(None, "tab", tab).unwrap();
+        let level_id = router.add_named(None, "level_slider", level).unwrap();
+        let down = router.deliver_mouse(MouseEvent::Down {
             pos: [20.0, 10.0],
             button: MouseButton::Left,
         });
-        assert_eq!(down.target_id.as_deref(), Some("level_slider"));
-        let grab = open.active_drag().expect("the press must grab it");
+        assert_eq!(down.target, Some(level_id));
+        assert!(router.active_drag().is_some(), "the press must grab it");
 
-        let mut next = ControlHost::builder()
-            .with_named_control("tab", tab.handle())
-            .with_named_control("leg_slider", leg.handle())
-            .build();
-        next.set_active_drag(Some(grab));
+        router.remove(level_id);
+        router.add_named(None, "leg_slider", leg.clone()).unwrap();
         assert!(
-            next.active_drag().is_none(),
+            router.active_drag().is_none(),
             "the control it had hold of is gone, so it is holding nothing",
         );
 
-        next.deliver_mouse(MouseEvent::Move { pos: [190.0, 10.0] });
+        router.deliver_mouse(MouseEvent::Move { pos: [190.0, 10.0] });
         assert_eq!(
             leg.value(),
             0.5,
             "and the slider standing where it was must not have moved",
         );
-
-        next.set_active_drag(Some(DragGrab::new(
-            ControlKey::at(1),
-            [20.0, 10.0],
-            MouseButton::Left,
-        )));
-        next.deliver_mouse(MouseEvent::Move { pos: [190.0, 10.0] });
-        assert!(leg.value() > 0.8, "which is what a place does");
+        // The rebuild-era half that restored a grab by position is gone: the
+        // router has no positional keys.
     }
 
     #[test]
-    fn a_control_that_has_moved_is_still_found_by_name() {
+    fn a_node_is_still_found_by_name_after_the_tree_changes() {
         let alpha = Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 0.0, 200.0, 20.0));
         let beta = Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 30.0, 200.0, 20.0));
-        let inserted = Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 60.0, 200.0, 20.0));
+        // Drawn over beta, so a plain hit at beta's place would find it.
+        let inserted = Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 30.0, 200.0, 20.0));
 
-        let mut before = ControlHost::builder()
-            .with_named_control("alpha", alpha.handle())
-            .with_named_control("beta", beta.handle())
-            .build();
-        before.set_focused_index(Some(1));
-        let down = before.deliver_mouse(MouseEvent::Down {
+        let mut router = Router::new();
+        let alpha_id = router.add_named(None, "alpha", alpha).unwrap();
+        let beta_id = router.add_named(None, "beta", beta.clone()).unwrap();
+        let down = router.deliver_mouse(MouseEvent::Down {
             pos: [20.0, 38.0],
             button: MouseButton::Left,
         });
-        assert_eq!(down.target_id.as_deref(), Some("beta"));
-        let focus = before.focused_key().expect("beta has the focus");
-        let grab = before.active_drag().expect("and the press has hold of it");
-
-        let mut after = ControlHost::builder()
-            .with_named_control("alpha", alpha.handle())
-            .with_named_control("inserted", inserted.handle())
-            .with_named_control("beta", beta.handle())
-            .build();
-        after.set_focused_key(Some(focus));
-        assert_eq!(
-            after.focused_index(),
-            Some(2),
-            "beta is still here, further along",
+        assert_eq!(down.target, Some(beta_id));
+        assert_eq!(router.focused(), Some(beta_id), "beta has the focus");
+        assert!(
+            router.active_drag().is_some(),
+            "and the press has hold of it"
         );
 
-        after.set_active_drag(Some(grab));
-        let moved = after.deliver_mouse(MouseEvent::Move { pos: [190.0, 38.0] });
-        assert_eq!(moved.target_id.as_deref(), Some("beta"));
+        router.remove(alpha_id);
+        router
+            .add_named(None, "inserted", inserted.clone())
+            .unwrap();
+        assert_eq!(router.find("beta"), Some(beta_id), "beta is still here");
+        assert_eq!(router.focused(), Some(beta_id), "and still focused");
+
+        let moved = router.deliver_mouse(MouseEvent::Move { pos: [190.0, 38.0] });
+        assert_eq!(moved.target, Some(beta_id));
         assert!(beta.value() > 0.8, "and the drag still has hold of it");
         assert_eq!(
             inserted.value(),
@@ -760,7 +761,7 @@ mod tests {
     }
 
     #[test]
-    fn control_host_keyboard_event_delivery_and_focus_cycling() {
+    fn router_keyboard_event_delivery_and_focus_cycling() {
         let label = Label::new("Header", Rect::new(0.0, 0.0, 200.0, 30.0));
         let sel = SelectableLabel::from_static(
             &["Option 1", "Option 2"],
@@ -768,27 +769,25 @@ mod tests {
         );
         let slider = Slider::new(0.5, 0.0, 1.0, Rect::new(0.0, 80.0, 200.0, 30.0));
 
-        let mut host = ControlHost::builder()
-            .with_control(label.handle())
-            .with_control(sel.handle())
-            .with_control(slider.handle())
-            .with_initial_focus(0)
-            .build();
+        let mut router = Router::new();
+        router.add(None, label);
+        let sel_id = router.add(None, sel);
+        let slider_id = router.add(None, slider);
 
-        assert_eq!(host.focused_index(), Some(0));
+        assert_eq!(router.focused(), None);
 
-        let tab_resp = host.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Tab });
+        let tab_resp = router.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Tab });
         assert!(tab_resp.handled);
-        assert_eq!(host.focused_index(), Some(1));
+        assert_eq!(router.focused(), Some(sel_id), "a label is no Tab stop");
 
-        let right_resp = host.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Right });
+        let right_resp = router.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Right });
         assert!(right_resp.handled);
         assert_eq!(right_resp.action, Some(ControlAction::StepRight));
 
-        host.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Tab });
-        assert_eq!(host.focused_index(), Some(2));
+        router.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Tab });
+        assert_eq!(router.focused(), Some(slider_id));
 
-        let slider_step = host.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Right });
+        let slider_step = router.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::Right });
         assert!(slider_step.handled);
         if let Some(ControlAction::ValueChange {
             new_value,
@@ -800,13 +799,13 @@ mod tests {
             panic!("Expected ValueChange on slider step");
         }
 
-        let backtab_resp = host.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::BackTab });
+        let backtab_resp = router.deliver_keyboard(KeyboardEvent::KeyDown { key: Key::BackTab });
         assert!(backtab_resp.handled);
-        assert_eq!(host.focused_index(), Some(1));
+        assert_eq!(router.focused(), Some(sel_id));
     }
 
     #[test]
-    fn control_host_mutates_underlying_control_states_directly() {
+    fn router_mutates_underlying_control_states_directly() {
         let mode_state = Arc::new(SelectableLabelState::new(0));
         let sel = SelectableLabel::from_static(
             &["Option A", "Option B", "Option C"],
@@ -822,32 +821,37 @@ mod tests {
         let btn = Button::new("AUTO", Rect::new(0.0, 80.0, 200.0, 30.0))
             .with_state(Arc::clone(&btn_state));
 
-        let mut host = ControlHost::builder()
-            .with_control(sel.handle())
-            .with_control(slider.handle())
-            .with_control(btn.handle())
-            .build();
+        let mut router = Router::new();
+        let sel_id = router.add(None, sel);
+        let slider_id = router.add(None, slider);
+        let btn_id = router.add(None, btn);
 
-        host.deliver_mouse(MouseEvent::Click {
+        router.deliver_mouse(MouseEvent::Click {
             pos: [190.0, 15.0],
             button: MouseButton::Left,
         });
         assert_eq!(mode_state.selected_index(), 1);
+        let sel = router.get::<SelectableLabel<&'static str>>(sel_id).unwrap();
         assert_eq!(sel.selected_index(), 1);
 
-        host.deliver_mouse(MouseEvent::Down {
+        router.deliver_mouse(MouseEvent::Down {
             pos: [160.0, 55.0],
             button: MouseButton::Left,
         });
         assert!((slider_state.value() - 0.8).abs() < 0.01);
+        let slider = router.get::<Slider>(slider_id).unwrap();
         assert!((slider.value() - 0.8).abs() < 0.01);
+        router.deliver_mouse(MouseEvent::Up {
+            pos: [160.0, 55.0],
+            button: MouseButton::Left,
+        });
 
-        host.deliver_mouse(MouseEvent::Click {
+        router.deliver_mouse(MouseEvent::Click {
             pos: [100.0, 95.0],
             button: MouseButton::Left,
         });
         assert!(btn_state.is_pressed());
-        assert!(btn.is_pressed());
+        assert!(router.get::<Button>(btn_id).unwrap().is_pressed());
     }
 
     #[test]
@@ -888,14 +892,13 @@ mod tests {
         sn.draw(&mut list, &ctx);
         assert!(!list.instances.is_empty());
 
-        let mut host = ControlHost::builder()
-            .with_named_control("sn", sn.handle())
-            .build();
+        let mut router = Router::new();
+        router.add_named(None, "sn", sn.clone()).unwrap();
 
         let (_, slider_r, _) = sn.sub_rects();
         let click_x = slider_r.x + slider_r.w * 0.5;
         let click_y = slider_r.y + slider_r.h * 0.5;
-        host.deliver_mouse(MouseEvent::Click {
+        router.deliver_mouse(MouseEvent::Click {
             pos: [click_x, click_y],
             button: MouseButton::Left,
         });
@@ -948,16 +951,17 @@ mod tests {
         let button_state = Arc::new(ButtonState::new(false));
         let button = Button::new("TOGGLE", Rect::new(20.0, 20.0, 120.0, 30.0))
             .with_state(Arc::clone(&button_state));
-        let panel = Panel::new(Rect::new(0.0, 0.0, 200.0, 100.0))
-            .with_named_control("toggle", button.handle());
+        let mut router = Router::new();
+        let panel = router.add(None, Panel::new(Rect::new(0.0, 0.0, 200.0, 100.0)));
+        let toggle = router.add_named(Some(panel), "toggle", button).unwrap();
 
-        let response = panel.deliver_event(InputEvent::Mouse(MouseEvent::Click {
+        let response = router.deliver_event(InputEvent::Mouse(MouseEvent::Click {
             pos: [40.0, 30.0],
             button: MouseButton::Left,
         }));
 
         assert!(response.handled);
-        assert_eq!(response.target_id.as_deref(), Some("toggle"));
+        assert_eq!(response.target, Some(toggle), "the child, not the panel");
         assert!(button_state.is_pressed());
     }
 
@@ -973,16 +977,21 @@ mod tests {
         let button_state = Arc::new(ButtonState::new(false));
         let button = Button::new("TOGGLE", Rect::new(20.0, 20.0, 120.0, 30.0))
             .with_state(Arc::clone(&button_state));
-        let panel = Panel::new(Rect::new(0.0, 0.0, 200.0, 100.0))
-            .with_title("PROPERTIES")
-            .with_data(Arc::clone(&properties))
-            .with_named_control("toggle", button.handle());
+        let mut router = Router::new();
+        let panel_id = router.add(
+            None,
+            Panel::new(Rect::new(0.0, 0.0, 200.0, 100.0))
+                .with_title("PROPERTIES")
+                .with_data(Arc::clone(&properties)),
+        );
+        router.add(Some(panel_id), button);
 
-        let response = panel.deliver_event(InputEvent::Mouse(MouseEvent::Click {
+        let response = router.deliver_event(InputEvent::Mouse(MouseEvent::Click {
             pos: [40.0, 30.0],
             button: MouseButton::Left,
         }));
         assert!(response.handled);
+        let panel = router.get::<Panel<Properties>>(panel_id).unwrap();
 
         panel.write_data(|properties| {
             properties.enabled = button_state.is_pressed();
@@ -1038,24 +1047,23 @@ mod tests {
     fn a_hovered_cell_is_the_one_under_the_pointer_and_nothing_else() {
         const CELLS: &[&str] = &["SM - Small", "MD - Medium", "LG - Large"];
         let radio = Radio::new(CELLS, Rect::new(10.0, 20.0, 300.0, 18.0));
-        let mut host = ControlHost::builder()
-            .with_named_control("cycle", radio.handle())
-            .build();
+        let mut router = Router::new();
+        router.add_named(None, "cycle", radio.clone()).unwrap();
 
         assert_eq!(radio.hovered_cell(), None, "nothing is hovered to start");
 
-        let moved = host.deliver_mouse(MouseEvent::Move { pos: [90.0, 29.0] });
+        let moved = router.deliver_mouse(MouseEvent::Move { pos: [90.0, 29.0] });
         assert!(!moved.handled, "a hover is not an interaction");
         assert_eq!(radio.hovered_cell(), Some(2));
         assert_eq!(radio.selected_index(), 0, "and it selects nothing");
 
-        host.deliver_mouse(MouseEvent::Move { pos: [41.5, 29.0] });
+        router.deliver_mouse(MouseEvent::Move { pos: [41.5, 29.0] });
         assert_eq!(radio.hovered_cell(), None);
 
-        host.deliver_mouse(MouseEvent::Move { pos: [90.0, 29.0] });
+        router.deliver_mouse(MouseEvent::Move { pos: [90.0, 29.0] });
         assert_eq!(radio.hovered_cell(), Some(2));
 
-        host.deliver_mouse(MouseEvent::Move { pos: [90.0, 300.0] });
+        router.deliver_mouse(MouseEvent::Move { pos: [90.0, 300.0] });
         assert_eq!(radio.hovered_cell(), None);
     }
 
@@ -1064,23 +1072,22 @@ mod tests {
         const CELLS: &[&str] = &["SV - Save", "PR - Print"];
         let grid = Options::new(CELLS, Rect::new(0.0, 0.0, 200.0, 20.0));
         let button = Button::new("CT - Center", Rect::new(0.0, 40.0, 60.0, 20.0));
-        let mut host = ControlHost::builder()
-            .with_control(grid.handle())
-            .with_control(button.handle())
-            .build();
+        let mut router = Router::new();
+        router.add(None, grid.clone());
+        router.add(None, button.clone());
 
-        host.deliver_mouse(MouseEvent::Move { pos: [15.0, 10.0] });
+        router.deliver_mouse(MouseEvent::Move { pos: [15.0, 10.0] });
         assert_eq!(grid.hovered_cell(), Some(0));
         assert!(!button.is_hovered());
         assert_eq!(grid.tooltip(0), Some("Save"));
 
-        host.deliver_mouse(MouseEvent::Move { pos: [30.0, 50.0] });
+        router.deliver_mouse(MouseEvent::Move { pos: [30.0, 50.0] });
         assert!(button.is_hovered(), "the button has it now");
         assert_eq!(grid.hovered_cell(), None, "and the grid has let go");
         assert_eq!(button.shown_text(), "CT");
         assert_eq!(button.tooltip(), Some("Center"));
 
-        host.deliver_mouse(MouseEvent::Down {
+        router.deliver_mouse(MouseEvent::Down {
             pos: [15.0, 10.0],
             button: MouseButton::Left,
         });
@@ -1097,22 +1104,21 @@ mod tests {
         let grid = Options::new(CELLS, Rect::new(0.0, 0.0, 200.0, 20.0))
             .with_tooltip_style(TooltipStyle::default().with_bg(TIP_BG));
         let button = Button::new("CT", Rect::new(0.0, 40.0, 60.0, 20.0)).with_bg(BUTTON_BG);
-        let mut host = ControlHost::builder()
-            .with_control(grid.handle())
-            .with_control(button.handle())
-            .build();
+        let mut router = Router::new();
+        router.add(None, grid);
+        router.add(None, button);
 
         let ctx = DrawContext::default();
         let mut quiet = DrawList::new();
-        host.draw(&mut quiet, &ctx);
+        router.render(&mut quiet, &ctx);
         assert!(
             !quiet.instances.iter().any(|inst| inst.color == TIP_BG),
             "nothing hovered draws no tip",
         );
 
-        host.deliver_mouse(MouseEvent::Move { pos: [15.0, 10.0] });
+        router.deliver_mouse(MouseEvent::Move { pos: [15.0, 10.0] });
         let mut list = DrawList::new();
-        host.draw(&mut list, &ctx);
+        router.render(&mut list, &ctx);
 
         let tip = list
             .instances

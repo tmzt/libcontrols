@@ -3,7 +3,7 @@ name = "libcontrols"
 version = "0.3.0"
 edition = "2024"
 license = "MIT"
-description = "Immediate-mode UI controls (labels, buttons, sliders, radios, option grids, panels) drawn as MSDF primitives"
+description = "UI controls (labels, buttons, sliders, radios, option grids, panels, dialogs) drawn as MSDF primitives and owned by a persistent router"
 repository = "https://github.com/tmzt/libcontrols"
 
 [dependencies]

@@ -5,11 +5,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use libmsdf::drawlist::{DrawList, LINE_BOX_RATIO, SdfInstance, SdfKind};
 
+use crate::control::HostedControl;
 use crate::event::{
     ControlAction, ControlPart, EventContext, Key, KeyboardEvent, MouseButton, MouseEvent,
 };
+use crate::flags::NodeState;
 use crate::handle::{ControlHandle, ReadValue};
-use crate::host::HostedControl;
 use crate::rect::{Rect, TextAlign};
 use crate::ring::{GlowRingStyle, draw_glowing_ring};
 use crate::tooltip::{TooltipStyle, draw_tooltip, split_label};
@@ -332,7 +333,7 @@ impl DrawControl for Button {
 
         ctx.draw_text(list, shown, [pen_x, pen_y], font_size, text_col);
 
-        if self.is_active() {
+        if self.is_active() || ctx.state.contains(NodeState::FOCUSED) {
             let style = self.glow_style.unwrap_or_default();
             draw_glowing_ring(list, self.rect, &style, &ctx.theme);
         }

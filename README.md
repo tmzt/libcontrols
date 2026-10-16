@@ -1,8 +1,8 @@
 # libcontrols
 
-Immediate-mode UI controls drawn as MSDF primitives.
+UI controls drawn as MSDF primitives, owned by a persistent router.
 
-`libcontrols` provides a set of reusable UI controls (labels, buttons, sliders, radios, option grids, panels) that render directly into [`libmsdf`](https://github.com/tmzt/libmsdf) draw lists. Controls are stateless and pure—they contain no internal event loops or state machines.
+`libcontrols` provides a set of reusable UI controls (labels, buttons, sliders, radios, option grids, panels, dialogs) that render directly into [`libmsdf`](https://github.com/tmzt/libmsdf) draw lists. A `Router` owns the controls as a tree for as long as the app keeps it, routes input to them, and draws them every frame; the app edits the tree only when its UI changes.
 
 ## Controls
 
@@ -25,68 +25,67 @@ and shows the name as a tooltip on hover. `Radio` and `Options` take
 the row has room for whole words. A label without the `" - "` separator is drawn
 as written.
 
-## Usage Pattern
+## Usage
 
-1. **Build controls** with a fluent builder API:
-   ```rust
-   let button = Button::new("Click me", Rect::new(10.0, 10.0, 100.0, 30.0))
-       .with_active(true);
-   ```
-
-2. **Register with ControlHost** for event routing:
-   ```rust
-   let mut host = ControlHost::builder()
-       .with_named_control("my_button", button.handle())
-       .build();
-   ```
-
-3. **Deliver input events**:
-   ```rust
-   let response = host.deliver_mouse(event);
-   let response = host.deliver_keyboard(event);
-   ```
-
-4. **Draw to a DrawList**:
-   ```rust
-   button.draw(&mut draw_list, &draw_context);
-   ```
-
-Read control values through their handles:
 ```rust
-let handle = button.handle();
-let text: String = handle.read();
-let is_active: bool = handle.read();
+// Once, when the UI is created:
+let mut router = Router::new();
+let panel = router.add(None, Panel::new(Rect::new(0.0, 0.0, 300.0, 200.0)).with_title("AUDIO"));
+let volume = router.add(Some(panel), Slider::new(0.5, 0.0, 1.0, Rect::new(10.0, 40.0, 280.0, 20.0)));
+let mute = Button::new("Mute", Rect::new(10.0, 80.0, 80.0, 30.0));
+let mute_state = mute.state.clone();               // values live in Arc state
+let mute = router.add(Some(panel), mute);
+
+// For every input event:
+let response = router.deliver_event(event);
+if response.target == Some(mute) && mute_state.take_click() { /* toggle */ }
+
+// When the layout changes:
+router.get_mut::<Slider>(volume).unwrap().rect = Rect::new(10.0, 40.0, 200.0, 20.0);
+
+// Every frame:
+router.render(&mut draw_list, &draw_context);
 ```
+
+Nodes are named by `NodeId`s (written `@17`), which the app keeps in the
+struct that owns its UI. A node may also get an alias unique within its router
+(`add_named`), found again with `find("ok")`; aliases starting with `@` or
+`libcontrols/` are reserved.
 
 ## Input routing
 
-Each event a `ControlHost` is given goes first to its filters (below), then:
+Each event the router is given passes through chains, in order:
 
-- **Pointer events and gestures** go to the control whose area contains the
-  pointer, searching from the last control added. A press grabs that control:
-  until the button is released, moves, drags and the release go to it even off
-  its area. A plain move outside a grab only updates hover.
-- **Keys** go to the focused control. Tab and BackTab move the focus and Escape
-  clears it; those three reach no control. `Key::Back` is an ordinary key.
-- **Focus changes** arrive as `handle_focus(FocusEvent::Gained)` and `Lost`.
-- **Hover** is enter and leave: only the control the pointer left and the one
-  it entered are told.
-- **Modifiers** arrive with every event in its `EventContext`
-  (`ctx.modifiers`, and `ctx.press_modifiers` for the press that started a
-  drag). No control is told when Shift goes down.
+1. **The global filter chain**, a `FilterStack` given to the root router: app-wide
+   rules such as accelerators. Rules are asked last pushed first and may pass
+   an event on, consume it, or redirect it to one node.
+2. **The modal stack**, if one is installed and holds a layer (below).
+3. **Routing**:
+   - **Pointer events and gestures** go to the innermost node whose area
+     contains the pointer. A press grabs that node: until the button is
+     released, moves, drags and the release go to it even off its area. A
+     plain move outside a grab only updates hover.
+   - **Keys** go to the focused node. Tab and BackTab step through the focus
+     stops in tree order, into containers and out again; Escape clears the
+     focus; those three reach no node. `Key::Back` is an ordinary key.
+   - **Focus changes** arrive as `handle_focus(FocusEvent::Gained)` and `Lost`,
+     only when the focus actually moves.
+   - **Hover** is enter and leave along the parent chain: only the nodes the
+     pointer left and the ones it entered are told.
+   - **Modifiers** arrive with every event in its `EventContext`
+     (`ctx.modifiers`, and `ctx.press_modifiers` for the press that started a
+     drag). No control is told when Shift goes down.
 
-Controls are named with interned `Symbol`s. `sym!("speed")` interns once per
-call site; a `&str` name still works anywhere a name is taken, and
-`response.target_id == Some(sym!("speed"))` compares two integers.
+Each node has declared `NodeFlags` (`FOCUSABLE`, `DISABLED`, `HIDDEN`,
+`TAB_THROUGH`), changed only with `router.set_flags`, and router-owned
+`NodeState` (`FOCUSED`, `FOCUS_WITHIN`, `HOVERED`, `HOVER_WITHIN`, `GRABBED`).
+Both reach a control in its `DrawContext` and `EventContext`, so a button
+draws its focus ring from `ctx.state`, and a panel glows while a child is
+focused. A disabled subtree takes no input and is drawn at half alpha.
 
-A host rebuilt per event starts empty. Carry what should survive into the next
-build: `focused_key()` / `set_focused_key()`, `active_drag()` /
-`set_active_drag()`, `hovered_key()` / `set_hovered_key()`, and
-`modifiers()` / `set_modifiers()`.
-
-A filter is an app-owned object that sees every event first, including Tab,
-Escape and modifier changes, and may pass it on, consume it, or redirect it to
-one named control. Register one only when there is a reason:
+A `Router` is itself a control: nested in another, it is one Tab stop that
+keeps Tab inside it (a focus scope), or, flagged `TAB_THROUGH`, one whose
+stops join the parent's.
 
 ```rust
 struct SaveShortcut;
@@ -99,52 +98,46 @@ impl InputFilter for SaveShortcut {
         }
     }
 }
-let host = ControlHost::builder().with_filter(&SaveShortcut).build();
+let filters = FilterStack::new();
+filters.add(SaveShortcut);
+let router = Router::new().with_filter_stack(filters);
 ```
 
 ## Modals
 
-A `ModalState` is the app's stack of open modals (up to four), kept in an
-`Arc` across host builds. While it holds any modal, a `ModalFilter` (created
-once from the state) redirects every event to a `ModalStack` control, so
-nothing beneath receives input: the base UI is level 0. The stack hands each
-event to the top modal and draws every modal, bottom to top, above the rest of
-the host. Escape, the platform back key and a tap outside the frame dismiss the
-top modal; `with_hold_open(true)` refuses those and reports
+`ModalStack::install` puts a modal stack in the root router, above every app
+root. Anything that implements the `Modal` trait can be pushed on it: the
+built-in `ModalDialog` (a frame, a content router and close controls), or a
+self-drawn or shaped control. Each layer owns the filter it is asked through
+while it is on top, so nothing beneath it receives input, and popping a layer
+drops its filter with it. The standard filter blocks pointer events outside
+the modal's bounds (or dismisses on an outside tap, by its `ModalOptions`) and
+dismisses on Escape and Back; a shaped modal returns a `ShapedLayerFilter`
+over the SDF shapes it actually draws, or over an alpha mask.
+`ModalOptions::with_hold_open(true)` refuses user dismissals and reports
 `ModalEvent::DismissRefused` instead, for unsaved changes. Transitions are
-`Timed` (moved by `advance`), `Driven` (the app sets progress) or `Instant`,
-and the look of each modal is a `ModalFrame` the app can implement.
+`Timed` (moved by `ModalState::advance`), `Driven` (the app sets progress) or
+`Instant`, and a modal animates from the `LayerView` in its contexts.
 
 ```rust
-// Once, in app state:
+// Once:
 let modals = Arc::new(ModalState::new());
-let modal_filter = modals.filter(sym!("modals"));
+ModalStack::install(&mut router, modals.clone(), viewport)?;
 
-// The settings icon pushes a modal; its Quit button pushes a confirm over it.
-modals.push(sym!("settings"));
-modals.push(sym!("confirm"));
+// The settings icon pushes a dialog; its Quit button pushes a confirm over it.
+let mut settings = ModalDialog::centered(viewport, [400.0, 300.0], 16.0)
+    .with_options(ModalOptions::default().with_hold_open(unsaved_changes));
+let quit = settings.content_mut().add(None, Button::new("Quit", quit_rect));
+router.push_modal(sym!("settings"), settings)?;
+
+let mut confirm = ModalDialog::centered(viewport, [240.0, 120.0], 12.0);
+let cancel = confirm.content_mut().add(None, Button::new("Cancel", cancel_rect));
+router.push_modal(sym!("confirm"), confirm.with_close_control(cancel))?;
 
 // Every frame:
 modals.advance(dt);
 for event in modals.take_events() { /* Closed { id, by }, DismissRefused { .. } */ }
-
-// Every host build: one Modal per stack entry, the stack added last.
-let mut stack = ModalStack::new(modals.clone(), viewport);
-for entry in modals.stack() {
-    stack = stack.with_modal(if entry.id == sym!("settings") {
-        Modal::centered(modals.clone(), entry.id, viewport, [400.0, 300.0], 16.0)
-            .with_hold_open(unsaved_changes)
-            .with_named_control(sym!("quit"), quit.handle())
-    } else {
-        Modal::centered(modals.clone(), entry.id, viewport, [240.0, 120.0], 12.0)
-            .with_named_control(sym!("cancel"), cancel.handle())
-            .with_close_control(sym!("cancel"))
-    });
-}
-let host = ControlHost::builder()
-    .with_named_control(sym!("modals"), stack.handle())
-    .with_filter(&modal_filter)
-    .build();
+router.render(&mut draw_list, &draw_context);
 ```
 
 ## Building
@@ -167,4 +160,4 @@ MIT License. See LICENSE file for details.
 | [Input routing and filters](docs/design/20261016_02_INPUT_ROUTING_AND_FILTERS_PLAN.md) | 2026-10-16 | Implemented | Fix the host's routing contract for 0.3.0: an app-owned `InputFilter` stack asked first (`Pass`, `Consumed`, `Redirect`), area routing with a grab, focus routing with `FocusEvent`s, hover as enter and leave, modifiers on every event in an `EventContext` (no `set_modifiers`), `Symbol` names and `Key::Back`; no per-control work per event; implemented and released in 0.3.0 (`8c34296`, tag `v0.3.0`). |
 | [Modal stack](docs/design/20261016_03_MODAL_STACK_PLAN.md) | 2026-10-16 | Implemented | Build modals on plan 02's `Redirect`: a persistent `ModalState` stack of four, a `ModalFilter` registered once that traps input to a hosted `ModalStack`, app-drawn frames, hold-open veto, Escape and Back dismissal; cuts 0.3.0 in its last step; implemented and released in 0.3.0 (`8c34296`, tag `v0.3.0`). |
 | [Focus manager: nested containers](docs/design/20261016_04_NESTED_CONTAINERS_PLAN.md) | 2026-10-16 | Superseded (by [Persistent control tree and router layers](docs/design/20261016_05_PERSISTENT_ROUTER_PLAN.md)) | Proposed routing through nested containers from the top host via `with_children` and `ControlPath`; replaced before implementation by a persistent router whose tree makes containers plain nodes. |
-| [Persistent control tree and router layers](docs/design/20261016_05_PERSISTENT_ROUTER_PLAN.md) | 2026-10-16 | Draft | Replace `ControlHost` with a persistent `Router` that owns its controls as a tree and only draws per frame; focus, hover and the grab are `NodeId`s it keeps; `Panel` children are nodes; declared `NodeFlags` (changed only through the router) and router-owned `NodeState` reach controls in the draw and event contexts; a `Router` implements the routed-control traits so it is a layer; a global filter chain runs first, then the modal stack, whose layers are any `Modal` (trait; `ModalDialog` built in) each owning its filter (breaking, 0.4.0 with the libmsdf 0.3.0 move); draft awaiting the owner's review. |
+| [Persistent control tree and router layers](docs/design/20261016_05_PERSISTENT_ROUTER_PLAN.md) | 2026-10-16 | In implementation | Replace `ControlHost` with a persistent `Router` that owns its controls as a tree and only draws per frame; focus, hover and the grab are `NodeId`s it keeps; `Panel` children are nodes; declared `NodeFlags` (changed only through the router) and router-owned `NodeState` reach controls in the draw and event contexts; a `Router` implements the routed-control traits so it is a layer; a global filter chain runs first, then the modal stack, whose layers are any `Modal` (trait; `ModalDialog` built in) each owning its filter (breaking, 0.4.0 with the libmsdf 0.3.0 move); approved, being implemented on `impl/0.4.0-router`. |

@@ -5,11 +5,11 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use libmsdf::drawlist::{DrawList, LINE_BOX_RATIO, SdfInstance, SdfKind};
 
+use crate::control::HostedControl;
 use crate::event::{
     ControlAction, ControlPart, EventContext, Key, KeyboardEvent, MouseButton, MouseEvent,
 };
 use crate::handle::{ControlHandle, ReadValue};
-use crate::host::HostedControl;
 use crate::rect::Rect;
 use crate::ring::{GlowRingStyle, draw_glowing_ring};
 use crate::tooltip::{TooltipStyle, draw_tooltip, split_label};

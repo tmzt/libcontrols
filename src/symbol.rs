@@ -48,6 +48,16 @@ impl Symbol {
         Symbol(id)
     }
 
+    /// The symbol for `name` if it has been interned, without interning it.
+    pub fn lookup(name: &str) -> Option<Symbol> {
+        interner()
+            .read()
+            .unwrap()
+            .by_name
+            .get(name)
+            .map(|&id| Symbol(id))
+    }
+
     /// The name. Lives as long as the process.
     pub fn as_str(self) -> &'static str {
         interner().read().unwrap().names[self.0 as usize]

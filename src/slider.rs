@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use libmsdf::drawlist::{DrawList, SdfInstance, SdfKind};
 
+use crate::flags::NodeState;
 use crate::handle::{ControlHandle, ReadValue};
 use crate::rect::Rect;
 use crate::ring::{GlowRingStyle, draw_glowing_ring};
@@ -272,17 +273,17 @@ impl DrawControl for Slider {
             }
         }
 
-        if self.is_active() {
+        if self.is_active() || ctx.state.contains(NodeState::FOCUSED) {
             let glow_style = self.glow_style.unwrap_or_default();
             draw_glowing_ring(list, thumb_rect, &glow_style, &ctx.theme);
         }
     }
 }
 
+use crate::control::HostedControl;
 use crate::event::{
     ControlAction, ControlPart, EventContext, Key, KeyboardEvent, MouseButton, MouseEvent,
 };
-use crate::host::HostedControl;
 
 impl HostedControl for Slider {
     fn bounds(&self) -> Rect {

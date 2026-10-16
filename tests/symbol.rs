@@ -1,6 +1,6 @@
 //! Interned control names.
 
-use libcontrols::{Button, ControlHost, ControlKey, MouseButton, MouseEvent, Rect, Symbol, sym};
+use libcontrols::{Button, MouseButton, MouseEvent, NodeId, Rect, Router, Symbol, sym};
 
 #[test]
 fn interning_the_same_name_gives_the_same_symbol() {
@@ -79,54 +79,60 @@ fn a_symbol_is_a_plain_shareable_value() {
 
 #[test]
 fn a_named_control_is_found_by_str_and_by_symbol() {
-    let a = Button::new("A", Rect::new(0.0, 0.0, 50.0, 20.0));
-    let b = Button::new("B", Rect::new(60.0, 0.0, 50.0, 20.0));
-    let host = ControlHost::builder()
-        .with_named_control("first", a.handle())
-        .with_named_control(sym!("second"), b.handle())
-        .build();
+    let mut router = Router::new();
+    let first = router
+        .add_named(
+            None,
+            "first",
+            Button::new("A", Rect::new(0.0, 0.0, 50.0, 20.0)),
+        )
+        .unwrap();
+    let second = router
+        .add_named(
+            None,
+            sym!("second"),
+            Button::new("B", Rect::new(60.0, 0.0, 50.0, 20.0)),
+        )
+        .unwrap();
+    assert_eq!(router.find("second"), Some(second), "a str alias works");
     assert_eq!(
-        host.find_by_id("second"),
-        Some(1),
-        "a str name must still work"
+        router.find_alias(sym!("first")),
+        Some(first),
+        "and so does a symbol"
     );
+    assert_eq!(router.find("missing"), None);
     assert_eq!(
-        host.find_by_id(sym!("first")),
-        Some(0),
-        "and so must a symbol"
+        Symbol::lookup("never-interned-by-anyone"),
+        None,
+        "a failed find interns nothing"
     );
-    assert_eq!(host.find_by_id("missing"), None);
 }
 
 #[test]
-fn the_response_names_the_control_as_a_symbol() {
-    let speed = Button::new("Speed", Rect::new(0.0, 0.0, 50.0, 20.0));
-    let mut host = ControlHost::builder()
-        .with_named_control("speed", speed.handle())
-        .build();
-    let resp = host.deliver_mouse(MouseEvent::Down {
+fn the_response_names_the_control_by_id() {
+    let mut router = Router::new();
+    let speed = router
+        .add_named(
+            None,
+            "speed",
+            Button::new("Speed", Rect::new(0.0, 0.0, 50.0, 20.0)),
+        )
+        .unwrap();
+    let resp = router.deliver_mouse(MouseEvent::Down {
         pos: [10.0, 10.0],
         button: MouseButton::Left,
     });
-    assert_eq!(
-        resp.target_id.as_deref(),
-        Some("speed"),
-        "as_deref still reads a str"
-    );
-    assert_eq!(
-        resp.target_id,
-        Some(sym!("speed")),
-        "and the id is the symbol"
-    );
+    assert_eq!(resp.target, Some(speed), "the app compares the ids it kept");
+    assert_eq!(router.find("speed"), resp.target);
 }
 
 #[test]
-fn a_control_key_is_copy_and_names_its_symbol() {
+fn a_node_id_is_copy_and_names_itself() {
     fn assert_copy<T: Copy>() {}
-    assert_copy::<ControlKey>();
-    let key = ControlKey::named("level");
-    let copy = key;
-    assert_eq!(key, copy);
-    assert_eq!(key.id(), Some(Symbol::intern("level")));
-    assert_eq!(ControlKey::at(3).id(), None, "a slot has no name");
+    assert_copy::<NodeId>();
+    let mut router = Router::new();
+    let id = router.add(None, Button::new("L", Rect::new(0.0, 0.0, 10.0, 10.0)));
+    let copy = id;
+    assert_eq!(id, copy);
+    assert_eq!(copy.to_string().parse::<NodeId>(), Ok(id));
 }

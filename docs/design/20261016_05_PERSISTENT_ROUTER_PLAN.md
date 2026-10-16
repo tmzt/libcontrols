@@ -1,7 +1,7 @@
 ---
 title: Persistent control tree and router layers
 date: 2026-10-16
-status: Draft
+status: In implementation
 covers: >
   libcontrols moves from hosts rebuilt per event to a persistent Router that
   owns its controls in a tree and only draws per frame. Focus, hover and the
@@ -985,3 +985,13 @@ keeps working until step 7 so each step stays green; new tests go in
 ## 13. Open questions
 
 None at present.
+
+## Amendment — 2026-10-16 03:16 EDT: implementation started
+
+Status changes from `Draft` to `In implementation`. The owner approved
+this plan ("thats good, approve and start the work") and asked for
+comprehensive tests, including tests meant to break it, with an adversarial
+review by a subagent. Implementation begins with step 1 on the branch
+`impl/0.4.0-router`, squash-merged into `main` when the plan is complete.
+From this amendment on the document is immutable; departures are recorded
+in `CHANGES.md` (AGENTS.md, Rule 1.7).

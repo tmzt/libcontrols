@@ -1,7 +1,8 @@
 //! Input event primitives, hit testing results, and control response actions.
 
-use crate::host::ControlKey;
-use crate::symbol::Symbol;
+use crate::flags::{NodeFlags, NodeState};
+use crate::modal::LayerView;
+use crate::router::NodeId;
 
 /// Mouse button enumeration.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -190,7 +191,7 @@ pub enum ControlPart {
 ///
 /// Outside this crate, build one with [`EventContext::new`] and the `with_*`
 /// methods, or start from `EventContext::default()` and assign fields.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[non_exhaustive]
 pub struct EventContext {
     /// The part of the control the event is for. Body for keys.
@@ -201,6 +202,12 @@ pub struct EventContext {
     /// The modifiers held at the press that started the grab this control
     /// holds; None when this control holds no grab.
     pub press_modifiers: Option<Modifiers>,
+    /// The declared flags of the node handling the event (set by the router).
+    pub flags: NodeFlags,
+    /// What the router knows about the node handling the event.
+    pub state: NodeState,
+    /// Where the modal handling the event is on its stack (set by the stack).
+    pub layer: Option<LayerView>,
 }
 
 impl EventContext {
@@ -245,23 +252,9 @@ pub enum FocusEvent {
     Lost,
 }
 
-/// Detailed result of a hit test against a control.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct ControlHit {
-    /// Index of the hit control in the host.
-    pub control_index: usize,
-    /// Specific sub-part that was hit.
-    pub part: ControlPart,
-    /// Absolute hit point in window/render space.
-    pub hit_pos: [f32; 2],
-    /// Local hit coordinate relative to the control's bounding box top-left.
-    pub local_pos: [f32; 2],
-    /// Normalized horizontal progress across the hit component or track in `[0.0, 1.0]`.
-    pub normalized_fraction: f32,
-}
-
 /// Action produced by a control in response to an input event.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum ControlAction {
     /// Control or sub-component was activated / clicked.
     Activated { part: ControlPart },
@@ -280,96 +273,8 @@ pub enum ControlAction {
     TextInput { ch: char },
     /// Custom action message.
     Custom(String),
-}
-
-/// A filter's answer for one event.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum Filtered {
-    /// Not mine: ask the next filter down, then route as usual.
-    Pass,
-    /// Spent: no control sees it. The action, if any, is returned to the app.
-    Consumed(Option<ControlAction>),
-    /// Deliver it to this control alone, through its normal handlers.
-    Redirect(ControlKey),
-}
-
-/// What the host knows when it asks a filter. Nothing per control.
-///
-/// Outside this crate, start from `FilterContext::default()` and assign fields.
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
-#[non_exhaustive]
-pub struct FilterContext {
-    /// The pointer, after recording this event.
-    pub pointer: Option<[f32; 2]>,
-    /// The modifiers held, after recording this event.
-    pub modifiers: Modifiers,
-    /// The focused control, if any.
-    pub focused: Option<ControlKey>,
-    /// The control holding the grab, if any.
-    pub grab: Option<ControlKey>,
-}
-
-/// Overall outcome returned by `ControlHost` upon delivering an event.
-#[derive(Clone, Debug, PartialEq)]
-pub struct EventResponse {
-    /// Whether the event was handled by any control.
-    pub handled: bool,
-    /// Index of the targeted control in the host, if any.
-    pub target_index: Option<usize>,
-    /// Optional identifier name of the targeted control.
-    pub target_id: Option<Symbol>,
-    /// Targeted sub-component part.
-    pub target_part: Option<ControlPart>,
-    /// Action emitted by the control.
-    pub action: Option<ControlAction>,
-    /// Currently focused control index after event delivery.
-    pub focused_index: Option<usize>,
-}
-
-impl EventResponse {
-    /// Create an unhandled response.
-    #[inline]
-    pub fn ignored(focused_index: Option<usize>) -> Self {
-        Self {
-            handled: false,
-            target_index: None,
-            target_id: None,
-            target_part: None,
-            action: None,
-            focused_index,
-        }
-    }
-
-    /// Handled, naming no control: a filter spent the event.
-    #[inline]
-    pub fn consumed(action: Option<ControlAction>, focused_index: Option<usize>) -> Self {
-        Self {
-            handled: true,
-            target_index: None,
-            target_id: None,
-            target_part: None,
-            action,
-            focused_index,
-        }
-    }
-
-    /// Create a handled response.
-    #[inline]
-    pub fn handled(
-        target_index: usize,
-        target_id: Option<Symbol>,
-        target_part: ControlPart,
-        action: Option<ControlAction>,
-        focused_index: Option<usize>,
-    ) -> Self {
-        Self {
-            handled: true,
-            target_index: Some(target_index),
-            target_id,
-            target_part: Some(target_part),
-            action,
-            focused_index,
-        }
-    }
+    /// A modal asks to be dismissed: for one of a dialog's close controls,
+    /// or (`None`) for itself. Outside a modal stack it is returned to the
+    /// app like any action.
+    Dismiss { control: Option<NodeId> },
 }

@@ -5,6 +5,8 @@ use std::fmt;
 use libmsdf::drawlist::DrawList;
 use libmsdf::font::{FontAtlas, ShapedRun, TextShaper};
 
+use crate::flags::{NodeFlags, NodeState};
+use crate::modal::LayerView;
 use crate::theme::ControlTheme;
 
 /// Stateless drawing contract for all UI controls.
@@ -28,6 +30,12 @@ pub struct DrawContext<'a> {
     pub theme: ControlTheme,
     /// Distance field antialiasing pixel range for text.
     pub px_range: f32,
+    /// The declared flags of the node being drawn (set by the router).
+    pub flags: NodeFlags,
+    /// What the router knows about the node being drawn: focus, hover, grab.
+    pub state: NodeState,
+    /// Where the modal being drawn is on its stack (set by the stack).
+    pub layer: Option<LayerView>,
 }
 
 impl<'a> fmt::Debug for DrawContext<'a> {
@@ -37,6 +45,9 @@ impl<'a> fmt::Debug for DrawContext<'a> {
             .field("has_shaper", &self.shaper.is_some())
             .field("theme", &self.theme)
             .field("px_range", &self.px_range)
+            .field("flags", &self.flags)
+            .field("state", &self.state)
+            .field("layer", &self.layer)
             .finish()
     }
 }
@@ -48,6 +59,9 @@ impl<'a> Default for DrawContext<'a> {
             shaper: None,
             theme: ControlTheme::default(),
             px_range: 6.0,
+            flags: NodeFlags::NONE,
+            state: NodeState::NONE,
+            layer: None,
         }
     }
 }
@@ -58,8 +72,7 @@ impl<'a> DrawContext<'a> {
         Self {
             atlas,
             shaper,
-            theme: ControlTheme::default(),
-            px_range: 6.0,
+            ..Self::default()
         }
     }
 

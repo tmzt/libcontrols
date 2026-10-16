@@ -5,11 +5,12 @@ use std::sync::Mutex;
 
 use libmsdf::drawlist::{DrawList, LINE_BOX_RATIO, SdfInstance, SdfKind};
 
+use crate::control::HostedControl;
 use crate::event::{
     ControlAction, ControlPart, EventContext, Key, KeyboardEvent, MouseButton, MouseEvent,
 };
+use crate::flags::NodeState;
 use crate::handle::{ControlHandle, ReadValue};
-use crate::host::HostedControl;
 use crate::rect::Rect;
 use crate::ring::{GlowRingStyle, draw_glowing_ring};
 use crate::traits::{DrawContext, DrawControl};
@@ -284,7 +285,13 @@ impl DrawControl for ArrowLabel {
         ctx.draw_text(list, &text, [pen_x, pen_y], font_size, text_col);
 
         let glow_style = self.glow_style.unwrap_or_default();
-        match self.active_part() {
+        let active = match self.active_part() {
+            ArrowLabelActive::None if ctx.state.contains(NodeState::FOCUSED) => {
+                ArrowLabelActive::EntireControl
+            }
+            part => part,
+        };
+        match active {
             ArrowLabelActive::None => {}
             ArrowLabelActive::Value => {
                 draw_glowing_ring(list, center_rect.pad_xy(-2.0, 1.0), &glow_style, &ctx.theme);

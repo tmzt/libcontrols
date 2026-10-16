@@ -6,11 +6,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use libmsdf::drawlist::{DrawList, LINE_BOX_RATIO, SdfInstance, SdfKind};
 
+use crate::control::HostedControl;
 use crate::event::{
     ControlAction, ControlPart, EventContext, Key, KeyboardEvent, MouseButton, MouseEvent,
 };
+use crate::flags::{NodeFlags, NodeState};
 use crate::handle::{ControlHandle, ReadValue};
-use crate::host::HostedControl;
 use crate::rect::{Rect, TextAlign};
 use crate::ring::{GlowRingStyle, draw_glowing_ring};
 use crate::traits::{DrawContext, DrawControl};
@@ -195,7 +196,7 @@ impl DrawControl for Label {
 
         ctx.draw_text(list, &text, [pen_x, pen_y], font_size, text_color);
 
-        if self.is_active() {
+        if self.is_active() || ctx.state.contains(NodeState::FOCUSED) {
             let style = self.glow_style.unwrap_or_default();
             draw_glowing_ring(list, self.rect, &style, &ctx.theme);
         }
@@ -203,6 +204,11 @@ impl DrawControl for Label {
 }
 
 impl HostedControl for Label {
+    /// A label is for reading, not a Tab stop.
+    fn default_flags(&self) -> NodeFlags {
+        NodeFlags::NONE
+    }
+
     fn bounds(&self) -> Rect {
         self.rect
     }
