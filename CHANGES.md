@@ -168,3 +168,56 @@ Plan: [Persistent control tree and router layers](docs/design/20261016_05_PERSIS
   grabbed) passed to controls in the draw and event contexts.
 - `ControlHost` and `ControlKey` are removed. The release is 0.4.0,
   shared with the libmsdf 0.3.0 move.
+
+## 2026-10-16 04:10 EDT — Persistent router: how it landed, and departures
+
+Plan: [Persistent control tree and router layers](docs/design/20261016_05_PERSISTENT_ROUTER_PLAN.md),
+frozen. Implemented on the branch `impl/0.4.0-router` and squash-merged
+into `main` as `5567fa7`. Small departures needed to make the plan work,
+or found by the two adversarial reviews the owner asked for:
+
+- **Commits:** steps 2 and 3, and steps 6 and 7, each landed as one branch
+  commit (one routing core; the removal made while the step 6 tests were
+  ported). Two review commits sit between the steps. `main` has one
+  commit.
+- **3.1:** `children` returns an iterator rather than `&[NodeId]`.
+  `Router::render` draws both passes for a root router, and `len` and
+  `is_empty` are added. `Symbol::lookup` finds a name without interning
+  it, so `find` never grows the interner. An id has one spelling
+  (`@01` does not parse).
+- **3.3:** the disabled look (half alpha) is applied by the router to
+  whatever a disabled subtree draws, the same for every control, rather
+  than by each control. `Radio` draws no focus ring (it never had one).
+- **4.1:** `set_focus` refuses a node that cannot take the focus: not
+  focusable, unless it is a nested router that is `TAB_THROUGH` or holds
+  an inner focus. A press or redirect that focuses a node inside a nested
+  router moves the parent's focus to the router node. A `TAB_THROUGH`
+  node is in the Tab order even when not `FOCUSABLE`, and a nested router
+  is a stop only if it has one of its own.
+- **4.1, new:** per-button press ownership. The rest of a press (drags,
+  its release, the Click after it) is consumed if what receives input
+  changed since its press: a layer closed or was pushed mid-press, or the
+  layer beneath a closed one became top. Without it a tap clicked through.
+- **6:** `FilterStack::push` takes `&Rc<dyn InputFilter>` (the chain is
+  single-threaded). A layer filter's `Redirect` is treated as `Pass`.
+- **8:** `LayerMask` is a struct with `drawn` and `texture`
+  constructors rather than a public enum (the drawn mask keeps a cache).
+  `ModalStack::modal` returns a `Ref`. `ModalState::default_transition`
+  is added. `Modal::covered` and `LayerFilter::reset` are added: a layer
+  pushed over another ends its hover, content grab and filter press. The
+  top modal is told `set_hover(None)` when the pointer leaves its shape.
+  A hidden `ModalStack` node traps nothing; a disabled one is inert but
+  still keeps input from the app while a layer is up.
+- **Version:** unchanged at 0.3.0. Under section 11, the libmsdf 0.3.0
+  move, which has not landed in libcontrols, cuts the shared 0.4.0.
+
+Left for the owner:
+- `ModalFrame::contains` is no longer consulted: a `ModalDialog`'s
+  outside taps use the AABB of its frame (section 8.6). Remove the method,
+  or let the dialog's filter use it?
+- A grab cancelled by the router (a layer opening, `set_flags`,
+  `remove`) is not told to the grabbed control, so a control's own
+  pressed or dragging state can stay set.
+- One `ModalState` installed in two routers, or a stack removed and
+  reinstalled over live entries, leaves entries without layers that
+  consume input.
