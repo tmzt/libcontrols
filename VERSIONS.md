@@ -156,3 +156,15 @@ written in that commit, which cannot name its own hash.
   `LayerMask` (`drawn`, `texture`), `LayerView` and
   `ModalState::default_transition`.
 - Added: `Symbol::lookup`.
+
+## 0.5.0 — 2026-10-16 (tag `v0.5.0`)
+
+The move to libmsdf 0.4.0. The commit is the one tagged `v0.5.0`: the entry
+is written in that commit, which cannot name its own hash.
+
+- **Breaking:** libmsdf moves from 0.3.0 to 0.4.0 (`b48d066`, tag `v0.4.0`).
+  libmsdf types appear in this crate's public API (`DrawContext::atlas` is a
+  `FontAtlas`, `DrawContext::shaper` a `TextShaper`, `DrawList` in
+  `DrawControl`). In libmsdf 0.4.0 `FontAtlas` gains fields, so struct
+  literals of it need updating, and the atlas format moves to v5. This
+  crate's own code is unchanged.
