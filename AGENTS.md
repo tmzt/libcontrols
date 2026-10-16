@@ -103,3 +103,18 @@ Before writing, modifying or deleting code for a new planned work item:
    same commit as every status-change amendment. This is an exception to
    Rule 3.1. The table is a summary: the documents and their amendments stay
    the record.
+
+## CRITICAL RULE 5: VERSIONS AND TAGS
+
+1. The commit that changes the crate's `version` in `Cargo.toml` is tagged
+   `v<version>` (for example `git tag v0.3.0 <commit>`) as soon as it is
+   committed. A tag that has been pushed is never moved or deleted.
+2. `VERSIONS.md` records each version change, and only version changes:
+   one entry per version, appended oldest first, headed
+   `## <version> — YYYY-MM-DD (<short commit>, tag v<version>)`. The entry
+   lists the public API changes since the previous version: what was added,
+   changed or removed, with breaking changes marked **Breaking**. Internal
+   changes are not listed, and commits that do not change the version get no
+   entry. Earlier entries are never edited.
+3. The `VERSIONS.md` entry is in the same commit as the version change. This
+   is an exception to Rule 3.1.
