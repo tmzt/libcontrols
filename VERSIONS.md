@@ -181,3 +181,17 @@ is written in that commit, which cannot name its own hash.
   with two new variants, `BakeOptions` and `FaceReport` gain fields, and a
   text run's glyphs composite as one shape, so overlapping glyph edges draw
   slightly lighter. This crate's own code is unchanged.
+
+## 0.7.0 — 2026-10-23 (tag `v0.7.0`)
+
+The move to libmsdf 0.6.0. The commit is the one tagged `v0.7.0`: the entry
+is written in that commit, which cannot name its own hash.
+
+- **Breaking:** libmsdf moves from 0.5.0 to 0.6.0 (`4de319c`, tag `v0.6.0`).
+  libmsdf types appear in this crate's public API (`DrawContext::atlas` is a
+  `FontAtlas`, `DrawContext::shaper` a `TextShaper`, `DrawList` in
+  `DrawControl`). In libmsdf 0.6.0 `FontAtlas` gains the field `cell_box`, so
+  struct literals of it need updating; the atlas format moves to 5:0.2.0 for
+  atlases with a cell box; and the bundled Texturina and Grenze Gotisch
+  atlases draw their accents whole, overhanging the line box. This crate's
+  own code is unchanged.
