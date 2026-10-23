@@ -235,3 +235,14 @@ held briefly after a quick tap and faded by a host clock. Buttons draw M3's
 pressed state layer and move down slightly; labels used as tap targets shift
 their text colour in OKLab with hue and chroma kept. Breaking, so 0.8.0 when
 implemented. Nothing is implemented until the owner approves it.
+
+## 2026-10-23 19:27 EDT — Plan: stateful scroll pane
+
+Planned work: docs/design/20261023_02_SCROLL_PANE_PLAN.md (Draft), at the
+owner's request ("libcontrols should have a stateful scroll pane, send the
+plan"). A `ScrollPane` router node with a shareable `ScrollState`;
+clipping, translation, culling and hit mapping in the router; tap or scroll
+decided by the touch slop, cancelling the child's press; fling, wheel,
+keys, focus into view, anchoring and an indicator; `Button` and `Label`
+activate on release. Builds on the press feedback plan (20261023_01).
+Nothing is implemented until the owner approves it.
