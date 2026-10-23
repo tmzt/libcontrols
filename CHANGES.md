@@ -221,3 +221,17 @@ Left for the owner:
 - One `ModalState` installed in two routers, or a stack removed and
   reinstalled over live entries, leaves entries without layers that
   consume input.
+
+## 2026-10-23 16:25 EDT — Planned: press feedback, after Material 3
+
+Plan: `docs/design/20261023_01_PRESS_FEEDBACK_PLAN.md` (Draft).
+
+The owner asked for a pressed ("depress") look for buttons, planned here
+rather than in an app, following Material 3 where possible, with plain-text
+tap targets shifting colour slightly within the same hue. The plan has the
+router track a transient press per node, separate from a button's latched
+state: set on touch-down, cancelled past a touch slop or by the host,
+held briefly after a quick tap and faded by a host clock. Buttons draw M3's
+pressed state layer and move down slightly; labels used as tap targets shift
+their text colour in OKLab with hue and chroma kept. Breaking, so 0.8.0 when
+implemented. Nothing is implemented until the owner approves it.
