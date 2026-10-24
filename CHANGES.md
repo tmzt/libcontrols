@@ -246,3 +246,26 @@ decided by the touch slop, cancelling the child's press; fling, wheel,
 keys, focus into view, anchoring and an indicator; `Button` and `Label`
 activate on release. Builds on the press feedback plan (20261023_01).
 Nothing is implemented until the owner approves it.
+
+## 2026-10-23 21:26 EDT — Scroll pane plan (20261023_02): departures in implementation
+
+Small departures from docs/design/20261023_02_SCROLL_PANE_PLAN.md, made in
+a9eecc6 (steps 1 to 9, in one commit):
+
+- **Step 10, the GPU check.** libcontrols has no GPU test feature and no
+  examples, so the check is CPU-side instead: `tests/scroll.rs` compares the
+  router's lowered frame (`DrawList::lower`) for a scrolled pane with one
+  built by hand from `push_clip`, `push_translate` and the rows in view, and
+  checks the resolved clips of nested panes.
+- **Section 3.7, anchoring at the start.** Anchoring is skipped while the
+  offset is 0, so content added at the top of a pane resting at its start is
+  shown rather than pushed out of view. Scrolled into the content, it anchors
+  as planned.
+- **Section 3.9, where input reads the theme.** The router has no theme of
+  its own; input uses the `ScrollTheme` of the `DrawContext` it was last
+  drawn with (the default before the first frame).
+- **Section 3.3, before the first frame.** `scroll_to`, `scroll_by` and
+  `scroll_into_view` bring the pane's range up to date first, so an app can
+  restore a place before drawing.
+- **Additions:** `ScrollPane::viewport` and `axis`, `ScrollState::is_moving`,
+  and a nested `Router`'s `claims_drag` answering for its grabbed node.
