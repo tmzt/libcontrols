@@ -572,3 +572,55 @@ sections 3.6, 3.9 and 6:
 4. **Overscroll:** none; the pane stops at its ends.
 5. **Fling constants:** decay 3.2 /s, minimum 30 px/s, as in section 3.9.
 6. **Anchoring:** on by default, off with `with_anchoring(false)`.
+
+## Amendment — 2026-10-23 21:14 EDT: the wheel as a two-finger drag, and optional overscroll
+
+The owner, during implementation: "wheel scrools contents same as two
+finger e4ag on supported hw" and "overscroll px/pct is optional, snap like
+iphone if enabled". This replaces section 3.6's **Wheel and trackpad**
+paragraph, section 4's overscroll item and item 4 of the 21:12 amendment.
+
+**Wheel and trackpad.** A wheel (`MouseEvent::Scroll`) moves the content
+exactly as a two-finger drag on a trackpad (`MouseEvent::ScrollPixels`)
+does: the same direction and the same routing, a wheel notch counting as
+`wheel_line` pixels. Positive `dy` (or `dx` on a horizontal pane)
+moves the content towards its start, as winit reports both. Either goes
+first to the node under the pointer and to the innermost pane that can
+move when that node returns no action; either stops a fling and starts
+none. Neither overscrolls: a trackpad's own momentum arrives as more
+`ScrollPixels` with no phase, so there is no lift to spring back on.
+
+**Overscroll, optional.** `ScrollPane::with_overscroll(Overscroll)`:
+
+```rust
+#[non_exhaustive]
+pub enum Overscroll {
+    /// Stops at the ends (the default).
+    None,
+    /// Up to this many pixels past either end.
+    Px(f32),
+    /// Up to this share of the viewport's length past either end.
+    Fraction(f32),
+}
+```
+
+When enabled, a finger drag past an end moves the content past it with
+increasing resistance, as on iOS: the content's displacement past the end
+is `d * (1 - 1 / (x * 0.55 / d + 1))` for a finger `x` pixels past it,
+with `d` the limit, so it never reaches `d`. Dragging back takes up the
+overscroll before the offset moves. On lift, and when a fling reaches an
+end with speed left (carrying that speed in), the content springs back to
+the end as a critically damped spring, `ScrollTheme::overscroll_spring`
+(an angular frequency, default 12 rad/s, settling in about 0.4 s), on
+`Router::advance`; it snaps to the end once within 0.5 px and slower than
+`min_fling`. The overscroll is part of the drawn offset, so hits follow
+the content. `ScrollState::overscroll() -> f32` reports it (negative
+before the start, positive past the end). A sticky pane that is following
+does not overscroll past its end. Without `advance`, the content returns
+to the end at the lift.
+
+Section 6 gains `Overscroll` and `ScrollTheme::overscroll_spring`
+(additive within this release). Section 5 gains: a drag past the end of an
+overscrolling pane moves it less than the finger and never past the limit;
+it springs back to the end over `advance`; a fling into the end bounces
+back to it; a pane without overscroll stops dead.
