@@ -195,3 +195,30 @@ is written in that commit, which cannot name its own hash.
   atlases with a cell box; and the bundled Texturina and Grenze Gotisch
   atlases draw their accents whole, overhanging the line box. This crate's
   own code is unchanged.
+
+## 0.8.0 — 2026-10-23 (tag `v0.8.0`)
+
+Scroll panes (docs/design/20261023_02_SCROLL_PANE_PLAN.md). The commit is
+the one tagged `v0.8.0`: the entry is written in that commit, which cannot
+name its own hash.
+
+- **Breaking:** `Button` and `Label` activate on a left `Click` only, no
+  longer on the `Down` as well, so a press that becomes a scroll does not
+  activate them. A host that sends only `Down` for a tap must send the
+  `Click`.
+- **Breaking:** `ControlTheme` gains the field `scroll: ScrollTheme`, so
+  struct literals of it need updating (`..ControlTheme::default()` covers it).
+- Added: the `scroll` module: `ScrollPane` (`new`, `with_state`,
+  `with_content_size`, `with_anchoring`, `with_indicator`,
+  `with_overscroll`, `with_background`, `state`, `viewport`, `axis`,
+  `set_viewport`, `set_content_size`), `ScrollState` (`new`, `sticky`,
+  `offset`, `max`, `overscroll`, `is_following`, `is_moving`), and the
+  `#[non_exhaustive]` enums `ScrollAxis`, `ScrollEdge` and `Overscroll`.
+- Added: `ScrollTheme` (`#[non_exhaustive]`, with `Default`).
+- Added: `Router::advance`, `scroll_to`, `scroll_by`, `scroll_into_view`,
+  `to_content` and `visible_bounds`.
+- Added: `HostedControl::claims_drag`, provided (default `false`); `Slider`,
+  `SliderNumeric` and `Edit` return `true`.
+- Changed, for nodes inside a scroll pane only: events carry positions in
+  the node's content coordinates, and `Router::set_focus` and Tab scroll the
+  focused node into view.

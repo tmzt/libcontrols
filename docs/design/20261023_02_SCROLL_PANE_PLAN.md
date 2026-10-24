@@ -1,7 +1,7 @@
 ---
 title: Stateful scroll pane
 date: 2026-10-23
-status: In implementation
+status: Implemented
 covers: >
   A ScrollPane node whose children are laid out on a content plane larger
   than its viewport. Its state (offset, the offset the user asked for, the
@@ -630,3 +630,15 @@ back to it; a pane without overscroll stops dead.
 Implementation has started, as approved at 21:12. From here this document
 changes only on the owner's explicit instruction; departures go to
 CHANGES.md (Rule 1.7).
+
+## Amendment — 2026-10-23 21:27 EDT: implemented
+
+Every step is done and its **Done when:** holds.
+
+- Steps 1 to 9: a9eecc6 (`ScrollState`, `ScrollPane`, drawing, hits,
+  activation on release, tap or scroll, fling and the clock, wheel, keys
+  and focus into view, anchoring, the indicator, and the 21:14 amendment's
+  overscroll).
+- Step 10: the commit tagged `v0.8.0` (the README section came with
+  a9eecc6; VERSIONS.md and the version here). Its GPU check is CPU-side, as
+  recorded in CHANGES.md at c3f592d with the other small departures.
