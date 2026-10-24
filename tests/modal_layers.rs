@@ -572,7 +572,10 @@ fn a_close_control_dismisses_with_its_node() {
         .push_modal("d", dialog.with_close_control(cancel))
         .unwrap();
     state.take_events();
-    router.deliver_mouse(down(280.0, 230.0));
+    router.deliver_mouse(MouseEvent::Click {
+        pos: [280.0, 230.0],
+        button: MouseButton::Left,
+    });
     assert_eq!(dismissed(&state), [DismissReason::Control(cancel)]);
 }
 

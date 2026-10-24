@@ -1428,14 +1428,16 @@ fn closing_a_dialog_on_a_press_does_not_click_through_to_the_base() {
     router
         .push_modal("d", dialog.with_close_control(close))
         .unwrap();
-    // A shell that sends Down, Up and Click for one tap.
+    // A shell that sends Down, Up and Click for one tap. Buttons activate
+    // on release (the Click), so that is when the dialog closes.
     router.deliver_mouse(down(320.0, 260.0));
-    assert!(
-        !state.contains("d"),
-        "the close button dismissed on the press"
-    );
+    assert!(state.contains("d"), "nothing activates on the press");
     router.deliver_mouse(up(320.0, 260.0));
     router.deliver_mouse(click(320.0, 260.0));
+    assert!(
+        !state.contains("d"),
+        "the close button dismissed on the release"
+    );
     assert!(
         !base_state.take_click(),
         "the tap that closed the dialog also pressed the base button"

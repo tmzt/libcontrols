@@ -238,6 +238,11 @@ impl DrawControl for Edit {
 }
 
 impl HostedControl for Edit {
+    /// A drag on it is its own (text selection), not a scroll.
+    fn claims_drag(&self, _part: ControlPart) -> bool {
+        true
+    }
+
     fn bounds(&self) -> Rect {
         self.rect
     }

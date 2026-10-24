@@ -903,7 +903,11 @@ fn the_readme_usage_example_runs() {
     let mute_state = mute.state.clone();
     let mute = router.add(Some(panel), mute);
 
-    let response = router.deliver_event(InputEvent::Mouse(down(20.0, 90.0)));
+    // Buttons activate on release: the Click of a tap.
+    let response = router.deliver_event(InputEvent::Mouse(MouseEvent::Click {
+        pos: [20.0, 90.0],
+        button: MouseButton::Left,
+    }));
     assert!(response.target == Some(mute) && mute_state.take_click());
 
     router.get_mut::<Slider>(volume).unwrap().rect = Rect::new(10.0, 40.0, 200.0, 20.0);

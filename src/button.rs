@@ -366,11 +366,8 @@ impl HostedControl for Button {
     fn handle_mouse(&self, event: &MouseEvent, ctx: &EventContext) -> Option<ControlAction> {
         let hit_part = ctx.part;
         match event {
+            // On release, so a press that becomes a scroll does not activate.
             MouseEvent::Click {
-                button: MouseButton::Left,
-                ..
-            }
-            | MouseEvent::Down {
                 button: MouseButton::Left,
                 ..
             } => {

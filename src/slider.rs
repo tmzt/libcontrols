@@ -286,6 +286,11 @@ use crate::event::{
 };
 
 impl HostedControl for Slider {
+    /// A drag on it moves its value, not a scroll pane.
+    fn claims_drag(&self, _part: ControlPart) -> bool {
+        true
+    }
+
     fn bounds(&self) -> Rect {
         self.rect
     }

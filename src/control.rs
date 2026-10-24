@@ -45,6 +45,14 @@ pub trait HostedControl {
     fn default_flags(&self) -> NodeFlags {
         NodeFlags::FOCUSABLE
     }
+
+    /// Whether a drag that began on `part` belongs to this control even when
+    /// it moves along a scroll pane's axis. A control that does not claim it
+    /// gives a drag past the touch slop to the pane around it, and is told
+    /// the press is up.
+    fn claims_drag(&self, _part: ControlPart) -> bool {
+        false
+    }
 }
 
 impl<'a, C: DrawControl> DrawControl for ControlHandle<'a, C> {
@@ -98,5 +106,10 @@ impl<'a, C: HostedControl> HostedControl for ControlHandle<'a, C> {
     #[inline]
     fn default_flags(&self) -> NodeFlags {
         self.control().default_flags()
+    }
+
+    #[inline]
+    fn claims_drag(&self, part: ControlPart) -> bool {
+        self.control().claims_drag(part)
     }
 }

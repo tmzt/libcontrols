@@ -18,6 +18,7 @@ pub mod radio;
 pub mod rect;
 pub mod ring;
 pub mod router;
+pub mod scroll;
 pub mod selectable_label;
 pub mod slider;
 pub mod slider_numeric;
@@ -50,11 +51,12 @@ pub use radio::{DEFAULT_CELL_GAP, DEFAULT_CELL_WIDTH, NO_CELL, Radio, RadioState
 pub use rect::{Rect, TextAlign};
 pub use ring::{GlowRingStyle, draw_glowing_ring};
 pub use router::{DragGrab, EventResponse, NameError, NodeId, ParseNodeIdError, Router};
+pub use scroll::{Overscroll, ScrollAxis, ScrollEdge, ScrollPane, ScrollState};
 pub use selectable_label::{SelectableLabel, SelectableLabelState};
 pub use slider::{Slider, SliderState, ThumbStyle};
 pub use slider_numeric::{NumericFormat, SliderNumeric, SliderNumericActive, SliderNumericState};
 pub use symbol::Symbol;
-pub use theme::ControlTheme;
+pub use theme::{ControlTheme, ScrollTheme};
 pub use tooltip::{LABEL_SEPARATOR, TooltipStyle, draw_tooltip, split_label};
 pub use traits::{DrawContext, DrawControl};
 

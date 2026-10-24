@@ -16,6 +16,7 @@ UI controls drawn as MSDF primitives, owned by a persistent router.
 - **Options** — Packed grid of independent toggle cells
 - **Panel** — Container with optional header, background, and border
 - **Edit** — Text input field with selection and formatting
+- **ScrollPane** — A viewport onto children laid out on a larger plane, scrolled by touch, wheel, trackpad and keys
 
 ## Labels and tooltips
 
@@ -140,6 +141,51 @@ for event in modals.take_events() { /* Closed { id, by }, DismissRefused { .. } 
 router.render(&mut draw_list, &draw_context);
 ```
 
+## Scroll panes
+
+A `ScrollPane` is a node whose children are laid out on a content plane, from
+the pane's top-left corner at offset zero, as if the pane were as tall (or
+wide) as its content. The router clips them to the viewport, moves them by the
+offset, skips the ones out of view, and gives them events in their own
+coordinates, so a control inside a pane works as it does anywhere else.
+
+```rust
+let place = ScrollState::new(); // keep it across rebuilds to keep the place
+let list = router.add(
+    None,
+    ScrollPane::new(Rect::new(0.0, 0.0, 360.0, 640.0), ScrollAxis::Vertical)
+        .with_state(place.clone())
+        .with_overscroll(Overscroll::Fraction(0.15)),
+);
+for (i, name) in names.iter().enumerate() {
+    router.add(Some(list), Button::new(name, Rect::new(0.0, i as f32 * 48.0, 360.0, 48.0)));
+}
+
+// Every frame:
+router.advance(dt); // flings, the overscroll spring and the indicator
+router.render(&mut draw_list, &draw_context);
+```
+
+- **Tap or scroll.** A press goes to the control under it. Once it moves past
+  the touch slop (`ScrollTheme::touch_slop`, 8 px) along the pane's axis, the
+  pane takes it: the control is told the press is up and its `Click` is
+  dropped. Buttons and labels activate on the `Click`, so a scroll never
+  presses them. Sliders and edits keep their drags (`HostedControl::claims_drag`).
+- **Fling.** A lift while moving flings, decaying on `Router::advance`; a
+  touch stops it. With `with_overscroll` (pixels or a share of the viewport),
+  a finger pulls the content past an end with growing resistance and it springs
+  back on release, as on iOS.
+- **Wheel and trackpad** scroll the content the same way, after the control
+  under the pointer (a slider takes the wheel first). Arrow keys, PageUp,
+  PageDown, Home and End scroll the pane around the focused control, and Tab
+  scrolls the focus into view.
+- **Keeping the place.** `ScrollState` remembers the offset the user chose and
+  returns to it when the content or viewport grows back; `ScrollState::sticky`
+  follows an end, like a terminal, until scrolled back. When content changes
+  above what is in view, what is in view stays where it is (anchoring).
+- `Router::scroll_to`, `scroll_by`, `scroll_into_view`, `to_content` and
+  `visible_bounds` move a pane and map points and bounds through it.
+
 ## Building
 
 ```bash
@@ -162,4 +208,4 @@ MIT License. See LICENSE file for details.
 | [Focus manager: nested containers](docs/design/20261016_04_NESTED_CONTAINERS_PLAN.md) | 2026-10-16 | Superseded (by [Persistent control tree and router layers](docs/design/20261016_05_PERSISTENT_ROUTER_PLAN.md)) | Proposed routing through nested containers from the top host via `with_children` and `ControlPath`; replaced before implementation by a persistent router whose tree makes containers plain nodes. |
 | [Persistent control tree and router layers](docs/design/20261016_05_PERSISTENT_ROUTER_PLAN.md) | 2026-10-16 | Implemented | Replace `ControlHost` with a persistent `Router` that owns its controls as a tree and only draws per frame; focus, hover and the grab are `NodeId`s it keeps; `Panel` children are nodes; declared `NodeFlags` (changed only through the router) and router-owned `NodeState` reach controls in the draw and event contexts; a `Router` implements the routed-control traits so it is a layer; a global filter chain runs first, then the modal stack, whose layers are any `Modal` (trait; `ModalDialog` built in) each owning its filter (breaking, 0.4.0 with the libmsdf 0.3.0 move); implemented in `5567fa7`, released with the libmsdf 0.3.0 move as 0.4.0. |
 | [Press feedback, after Material 3](docs/design/20261023_01_PRESS_FEEDBACK_PLAN.md) | 2026-10-23 | Draft | A transient press tracked by the router (`NodeState::PRESSED`, cancelled past an 8 px touch slop or by `Router::cancel_press`, held 100 ms and faded 150 ms by `Router::advance`), read as `DrawContext::press`: buttons draw M3's 10% pressed state layer and move down 2 px, plain-text tap targets shift colour within the same hue; breaking (0.8.0); drafted for the owner's review. |
-| [Stateful scroll pane](docs/design/20261023_02_SCROLL_PANE_PLAN.md) | 2026-10-23 | Draft | A `ScrollPane` node over a shareable `ScrollState` (offset, remembered offset, sticky end, fling): the router clips, translates (libmsdf `push_translate`) and culls its children, maps hits and events into content coordinates, and moves a drag past the touch slop from the child to the pane, cancelling its press; wheel, keys, focus into view, anchoring and an indicator; buttons and labels activate on release; breaking; drafted for the owner's review. |
+| [Stateful scroll pane](docs/design/20261023_02_SCROLL_PANE_PLAN.md) | 2026-10-23 | In implementation | A `ScrollPane` node over a shareable `ScrollState` (offset, remembered offset, sticky end, fling): the router clips, translates (libmsdf `push_translate`) and culls its children, maps hits and events into content coordinates, and moves a drag past the touch slop from the child to the pane, cancelling its press; wheel, keys, focus into view, anchoring and an indicator; buttons and labels activate on release; optional iOS-style overscroll; breaking (0.8.0); approved and in implementation. |

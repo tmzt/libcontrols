@@ -1,7 +1,7 @@
 ---
 title: Stateful scroll pane
 date: 2026-10-23
-status: Draft
+status: In implementation
 covers: >
   A ScrollPane node whose children are laid out on a content plane larger
   than its viewport. Its state (offset, the offset the user asked for, the
@@ -624,3 +624,9 @@ Section 6 gains `Overscroll` and `ScrollTheme::overscroll_spring`
 overscrolling pane moves it less than the finger and never past the limit;
 it springs back to the end over `advance`; a fling into the end bounces
 back to it; a pane without overscroll stops dead.
+
+## Amendment — 2026-10-23 21:26 EDT: implementation started; this document is now immutable
+
+Implementation has started, as approved at 21:12. From here this document
+changes only on the owner's explicit instruction; departures go to
+CHANGES.md (Rule 1.7).

@@ -31,6 +31,64 @@ pub struct ControlTheme {
     pub px_range: f32,
     /// Default corner radius for rounded rects and control boundaries.
     pub corner_radius: f32,
+    /// How scroll panes tell a tap from a drag, fling, overscroll and show
+    /// their indicator.
+    pub scroll: ScrollTheme,
+}
+
+/// Scroll pane values (docs/design/20261023_02_SCROLL_PANE_PLAN.md, section
+/// 3.9), in the router's pixels and seconds. Input reads the values of the
+/// theme the router was last drawn with.
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct ScrollTheme {
+    /// How far a press may move before a pane may take it as a scroll
+    /// (Material 3: 8 dp).
+    pub touch_slop: f32,
+    /// Pixels per wheel notch.
+    pub wheel_line: f32,
+    /// A fling's speed falls to `e^-fling_decay` of itself each second.
+    pub fling_decay: f32,
+    /// Slower than this (px/s), a fling stops or does not start.
+    pub min_fling: f32,
+    /// The fastest fling (px/s).
+    pub max_fling: f32,
+    /// A finger resting this long (s) before it lifts does not fling.
+    pub rest: f32,
+    /// The overscroll spring's angular frequency (rad/s), critically damped.
+    pub overscroll_spring: f32,
+    /// The indicator's thickness.
+    pub indicator_width: f32,
+    /// The indicator's inset from the viewport's edges.
+    pub indicator_inset: f32,
+    /// The indicator's shortest length.
+    pub indicator_min_length: f32,
+    /// The indicator's colour at full visibility `[R, G, B, A]`.
+    pub indicator_color: [f32; 4],
+    /// How long (s) the indicator stays after the pane stops.
+    pub indicator_idle: f32,
+    /// How long (s) the indicator takes to fade.
+    pub indicator_fade: f32,
+}
+
+impl Default for ScrollTheme {
+    fn default() -> Self {
+        Self {
+            touch_slop: 8.0,
+            wheel_line: 48.0,
+            fling_decay: 3.2,
+            min_fling: 30.0,
+            max_fling: 8000.0,
+            rest: 0.100,
+            overscroll_spring: 12.0,
+            indicator_width: 4.0,
+            indicator_inset: 2.0,
+            indicator_min_length: 24.0,
+            indicator_color: [0.55, 0.62, 0.70, 0.5],
+            indicator_idle: 0.5,
+            indicator_fade: 0.150,
+        }
+    }
 }
 
 impl Default for ControlTheme {
@@ -50,6 +108,7 @@ impl Default for ControlTheme {
             default_font_size: 14.0,
             px_range: 6.0,
             corner_radius: 2.0,
+            scroll: ScrollTheme::default(),
         }
     }
 }

@@ -1214,7 +1214,7 @@ fn a_close_control_dismisses_with_its_symbol() {
         close = Some(id);
     });
     let close = close.unwrap();
-    let resp = env.send(m_down(250.0, 210.0));
+    let resp = env.send(m_click(250.0, 210.0));
     assert_eq!(resp.target, Some(env.stack), "the response is the stack's");
     assert_eq!(
         resp.action,
@@ -1243,7 +1243,7 @@ fn hold_open_refuses_user_dismissals_and_reports_them() {
     env.send(k(Key::Back));
     env.send(m_down(50.0, 50.0));
     env.send(m_up(50.0, 50.0));
-    env.send(m_down(250.0, 210.0));
+    env.send(m_click(250.0, 210.0));
     assert_eq!(
         refused(&env.state),
         [
@@ -1682,7 +1682,7 @@ fn the_response_names_the_stack_and_carries_the_inner_action() {
     let mut first = lower();
     first.content_mut().add(None, ok);
     env.router.push_modal("lower", first).unwrap();
-    let resp = env.send(m_down(250.0, 210.0));
+    let resp = env.send(m_click(250.0, 210.0));
     assert_eq!(resp.target, Some(env.stack));
     assert!(matches!(resp.action, Some(ControlAction::Activated { .. })));
     assert!(clicks.take_click(), "the button inside was pressed");
@@ -1762,7 +1762,7 @@ fn a_host_with_only_a_stack_and_its_filter_works() {
         .unwrap();
     env.state.take_events();
     assert_eq!(env.router.len(), 1, "only the stack");
-    env.send(m_down(250.0, 210.0));
+    env.send(m_click(250.0, 210.0));
     assert_eq!(dismissed(&env.state), [DismissReason::Control(close)]);
     assert!(!env.state.captures_input());
     assert!(env.modals().is_empty());
@@ -1783,7 +1783,7 @@ fn the_readme_two_level_example_runs() {
     settings.content_mut().add(None, quit);
     router.push_modal(sym!("settings"), settings).unwrap();
     modals.advance(1.0);
-    router.deliver_event(m_down(230.0, 180.0));
+    router.deliver_event(m_click(230.0, 180.0));
     assert!(quit_clicks.take_click(), "Quit inside settings is pressed");
 
     let mut confirm = ModalDialog::centered(VIEWPORT, [240.0, 120.0], 12.0);
@@ -1797,7 +1797,7 @@ fn the_readme_two_level_example_runs() {
     modals.advance(1.0);
     modals.take_events();
 
-    router.deliver_event(m_down(300.0, 270.0));
+    router.deliver_event(m_click(300.0, 270.0));
     assert_eq!(
         modals.take_events(),
         [ModalEvent::Dismissed {

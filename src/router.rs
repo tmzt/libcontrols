@@ -17,7 +17,10 @@ use crate::event::{
 };
 use crate::filter::{FilterContext, FilterStack, Filtered};
 use crate::flags::{NodeFlags, NodeState};
+use crate::rect::Rect;
+use crate::scroll::{ScrollAxis, ScrollPane};
 use crate::symbol::Symbol;
+use crate::theme::ScrollTheme;
 use crate::traits::{DrawContext, DrawControl};
 
 /// The prefix of the aliases the library keeps for its own nodes.
@@ -141,6 +144,16 @@ pub struct Router {
     /// release, the Click after) goes only to that owner, and is consumed if
     /// another now receives input (a layer closed or opened mid-press).
     presses: RefCell<Vec<Press>>,
+    /// Router time in seconds, the sum of every `advance`.
+    time: Cell<f64>,
+    /// Whether `advance` has ever been called.
+    clocked: Cell<bool>,
+    /// The scroll values of the theme last drawn with.
+    scroll_theme: Cell<ScrollTheme>,
+    /// The pane a press moved to, and by which button.
+    pane_drag: Cell<Option<(usize, MouseButton)>>,
+    /// The `Click` to drop: it ends a press a pane took.
+    drop_click: Cell<Option<MouseButton>>,
 }
 
 /// Who receives input at the root: the app's nodes, or a layer of the modal
@@ -167,6 +180,10 @@ struct Grab {
     button: MouseButton,
     start_pos: [f32; 2],
     press_modifiers: Modifiers,
+    /// The part the press landed on.
+    part: ControlPart,
+    /// The drag passed the touch slop and stayed with the node.
+    kept: bool,
 }
 
 /// A drag in progress: the node the press grabbed and how.
@@ -397,6 +414,14 @@ impl Router {
         {
             self.set_grab(None);
         }
+        if let Some((pane, _)) = self.pane_drag.get()
+            && self.is_within(pane, index)
+        {
+            if let Some(p) = self.scroll_at(pane) {
+                p.state().with(|s| s.cancel_drag());
+            }
+            self.pane_drag.set(None);
+        }
     }
 
     /// Whether `index` is `ancestor` or below it.
@@ -525,22 +550,6 @@ impl Router {
         self.nodes[index].as_mut().expect("a live node")
     }
 
-    /// Visit the visible tree in pre-order, skipping hidden subtrees.
-    /// Visit the visible tree in pre-order, skipping hidden subtrees; each
-    /// node with whether it is disabled (itself or through an ancestor).
-    fn visit_visible(&self, mut visit: impl FnMut(&Node, bool)) {
-        let mut stack: Vec<(usize, bool)> = self.roots.iter().rev().map(|&r| (r, false)).collect();
-        while let Some((index, inherited)) = stack.pop() {
-            let node = self.node(index);
-            if node.flags.contains(NodeFlags::HIDDEN) {
-                continue;
-            }
-            let disabled = inherited || node.flags.contains(NodeFlags::DISABLED);
-            visit(node, disabled);
-            stack.extend(node.children.iter().rev().map(|&c| (c, disabled)));
-        }
-    }
-
     /// Draw one node with `pass`, halving the alpha of what it pushed when it
     /// is disabled: the disabled look, the same for every control.
     fn draw_node(
@@ -578,19 +587,118 @@ impl Router {
 }
 
 impl DrawControl for Router {
-    /// Every visible node's `draw`, in pre-order.
+    /// Every visible node's `draw`, in pre-order. A scroll pane's children
+    /// are clipped to its viewport and moved by its offset, and those out
+    /// of view are skipped. Brings every pane's range up to date first, and
+    /// keeps the theme's scroll values for input.
     fn draw(&self, list: &mut DrawList, ctx: &DrawContext) {
-        self.visit_visible(|node, disabled| {
-            Self::draw_node(list, ctx, node, disabled, |c, l, x| c.draw(l, x));
-        });
+        self.scroll_theme.set(ctx.theme.scroll);
+        self.update_panes();
+        for &r in &self.roots {
+            self.draw_subtree(list, ctx, r, false, None, [0.0, 0.0], false);
+        }
     }
 
     /// Every visible node's `draw_overlay`, in pre-order, after every
-    /// node's `draw`.
+    /// node's `draw`. A pane's children are moved by its offset but not
+    /// clipped, so a tooltip may extend past the viewport.
     fn draw_overlay(&self, list: &mut DrawList, ctx: &DrawContext) {
-        self.visit_visible(|node, disabled| {
+        for &r in &self.roots {
+            self.draw_subtree(list, ctx, r, false, None, [0.0, 0.0], true);
+        }
+    }
+}
+
+/// Whether two rectangles overlap.
+fn overlaps(a: Rect, b: Rect) -> bool {
+    a.x < b.right() && b.x < a.right() && a.y < b.bottom() && b.y < a.bottom()
+}
+
+/// The overlap of two rectangles (empty when they do not overlap).
+fn intersect(a: Rect, b: Rect) -> Rect {
+    let x = a.x.max(b.x);
+    let y = a.y.max(b.y);
+    Rect::new(
+        x,
+        y,
+        (a.right().min(b.right()) - x).max(0.0),
+        (a.bottom().min(b.bottom()) - y).max(0.0),
+    )
+}
+
+fn add(a: [f32; 2], b: [f32; 2]) -> [f32; 2] {
+    [a[0] + b[0], a[1] + b[1]]
+}
+
+impl Router {
+    /// Draw one subtree in one pass. `visible` is the part of the nearest
+    /// pane's content in view, in this node's coordinates; `shift` turns a
+    /// screen point into this node's coordinates.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_subtree(
+        &self,
+        list: &mut DrawList,
+        ctx: &DrawContext,
+        index: usize,
+        inherited: bool,
+        visible: Option<Rect>,
+        shift: [f32; 2],
+        overlay: bool,
+    ) {
+        let node = self.node(index);
+        if node.flags.contains(NodeFlags::HIDDEN) {
+            return;
+        }
+        if visible.is_some_and(|v| !overlaps(node.control.bounds(), v)) {
+            return;
+        }
+        let disabled = inherited || node.flags.contains(NodeFlags::DISABLED);
+        if overlay {
             Self::draw_node(list, ctx, node, disabled, |c, l, x| c.draw_overlay(l, x));
-        });
+        } else {
+            Self::draw_node(list, ctx, node, disabled, |c, l, x| c.draw(l, x));
+        }
+        let Some(pane) = self.scroll_at(index) else {
+            for &c in &node.children {
+                self.draw_subtree(list, ctx, c, disabled, visible, shift, overlay);
+            }
+            return;
+        };
+        let vp = pane.viewport();
+        let off = pane.drawn_offset();
+        if !overlay {
+            // Clips are in screen pixels; the pane's coordinates are the
+            // screen's plus `shift`.
+            list.push_clip([vp.x - shift[0], vp.y - shift[1]], vp.size());
+        }
+        list.push_translate(-off[0], -off[1]);
+        let mut inner = visible.map_or(vp, |v| intersect(vp, v));
+        inner.x += off[0];
+        inner.y += off[1];
+        for &c in &node.children {
+            self.draw_subtree(
+                list,
+                ctx,
+                c,
+                disabled,
+                Some(inner),
+                add(shift, off),
+                overlay,
+            );
+        }
+        list.push_translate_end();
+        if !overlay {
+            list.push_clip_end();
+            if pane.shows_indicator() {
+                let start = list.instances.len();
+                pane.draw_indicator(list, &ctx.theme.scroll, self.time.get());
+                if disabled {
+                    for instance in &mut list.instances[start..] {
+                        instance.color[3] *= 0.5;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -619,11 +727,15 @@ impl Router {
     /// Focus a node (or nothing). The node that had the focus is told
     /// `Lost` and the new one `Gained`, only if the focus actually changes.
     /// A node that is not here, or cannot take the focus, clears it.
+    /// A node inside scroll panes is scrolled into view.
     pub fn set_focus(&self, id: Option<NodeId>) {
         let index = id
             .and_then(|id| self.index(id))
             .filter(|&i| self.can_focus(i));
         self.change_focus(index);
+        if let Some(i) = index {
+            self.bring_into_view(i);
+        }
     }
 
     /// The innermost node under the pointer.
@@ -697,6 +809,9 @@ impl Router {
         if let Some(resp) = self.run_layers(InputEvent::Mouse(event)) {
             return resp;
         }
+        if let Some(resp) = self.pane_input(&event) {
+            return resp;
+        }
 
         if let Some(grab) = self.grab.get() {
             let grabbed = match event {
@@ -708,16 +823,17 @@ impl Router {
                 _ => false,
             };
             if grabbed {
+                let local = self.map_event(grab.index, event);
                 let part = self
                     .node(grab.index)
                     .control
-                    .hit_test(event.pos())
+                    .hit_test(local.pos())
                     .map_or(ControlPart::Body, |(p, _)| p);
                 let ctx = self
                     .context(grab.index, part)
                     .with_press_modifiers(Some(grab.press_modifiers));
                 let node = self.node(grab.index);
-                let action = node.control.handle_mouse(&event, &ctx);
+                let action = node.control.handle_mouse(&local, &ctx);
                 return EventResponse::handled(node.id, part, action, self.focused());
             }
         }
@@ -734,7 +850,8 @@ impl Router {
                 && self.takes_input(index)
             {
                 let ctx = self.context(index, part);
-                self.node(index).control.handle_mouse(&event, &ctx);
+                let local = self.map_event(index, event);
+                self.node(index).control.handle_mouse(&local, &ctx);
             }
             return EventResponse::ignored(self.focused());
         }
@@ -758,11 +875,26 @@ impl Router {
                 button,
                 start_pos: pos,
                 press_modifiers: self.modifiers.get(),
+                part,
+                kept: false,
             }));
         }
         let ctx = self.context(index, part);
         let node = self.node(index);
-        let action = node.control.handle_mouse(&event, &ctx);
+        let action = node
+            .control
+            .handle_mouse(&self.map_event(index, event), &ctx);
+        // A wheel the node did not use scrolls the pane around it.
+        if action.is_none()
+            && let Some(pane) = self.wheel(index, &event)
+        {
+            return EventResponse::handled(
+                self.node(pane).id,
+                ControlPart::Body,
+                None,
+                self.focused(),
+            );
+        }
         // A press that focused something inside a nested router moves this
         // router's focus to it, so only one node is ever focused.
         if presses
@@ -845,6 +977,17 @@ impl Router {
         let ctx = self.context(index, ControlPart::Body);
         let node = self.node(index);
         let action = node.control.handle_keyboard(&event, &ctx);
+        // A key the focused node did not use may page the pane around it.
+        if action.is_none()
+            && let Some(pane) = self.pane_key(index, &event)
+        {
+            return EventResponse::handled(
+                self.node(pane).id,
+                ControlPart::Body,
+                None,
+                self.focused(),
+            );
+        }
         EventResponse::handled(node.id, ControlPart::Body, action, self.focused())
     }
 
@@ -969,7 +1112,7 @@ impl Router {
             return EventResponse::handled(id, ControlPart::Body, None, focused);
         }
         let part_at = |pos: Option<[f32; 2]>| {
-            pos.and_then(|p| self.node(index).control.hit_test(p))
+            pos.and_then(|p| self.node(index).control.hit_test(self.local(index, p)))
                 .map(|(part, _)| part)
         };
         let node = self.node(index);
@@ -988,7 +1131,7 @@ impl Router {
                                 let p = self
                                     .node(i)
                                     .control
-                                    .hit_test(mouse.pos())
+                                    .hit_test(self.local(i, mouse.pos()))
                                     .map_or(ControlPart::Body, |(p, _)| p);
                                 (i, p)
                             })
@@ -1010,7 +1153,9 @@ impl Router {
                 {
                     self.set_grab(None);
                 }
-                let action = node.control.handle_mouse(&mouse, &ctx);
+                let action = node
+                    .control
+                    .handle_mouse(&self.map_event(index, mouse), &ctx);
                 self.follow_inner_focus(index);
                 EventResponse::handled(id, part, action, self.focused())
             }
@@ -1111,9 +1256,14 @@ impl Router {
     /// the roots last to first, then the hit node's children last to first,
     /// down to the deepest hit. Hidden subtrees are skipped; the descent stops
     /// at a disabled node, which is then the target.
+    ///
+    /// Each level is tested in its own coordinates: below a scroll pane, the
+    /// point moves by the pane's offset, and the pane's children are reached
+    /// only through its viewport.
     fn hit_path(&self, pos: [f32; 2]) -> Vec<Hit> {
         let mut path = Vec::new();
         let mut level: &[usize] = &self.roots;
+        let mut pos = pos;
         loop {
             let hit = level.iter().rev().find_map(|&i| {
                 let node = self.node(i);
@@ -1129,6 +1279,9 @@ impl Router {
             let node = self.node(index);
             if node.flags.contains(NodeFlags::DISABLED) {
                 return path;
+            }
+            if let Some(pane) = self.scroll_at(index) {
+                pos = add(pos, pane.drawn_offset());
             }
             level = &node.children;
         }
@@ -1288,6 +1441,12 @@ impl Router {
         any.downcast_ref::<Router>()
     }
 
+    /// The scroll pane a node is, if it is one.
+    fn scroll_at(&self, index: usize) -> Option<&ScrollPane> {
+        let any: &dyn Any = self.node(index).control.as_ref();
+        any.downcast_ref::<ScrollPane>()
+    }
+
     /// Move the focus one Tab stop forward (or back). With `wrap`, it wraps
     /// at the ends; without, it returns false at an end instead of moving
     /// (for a router whose stops a parent walks through).
@@ -1356,6 +1515,7 @@ impl Router {
                 continue;
             }
             self.change_focus(Some(candidate));
+            self.bring_into_view(candidate);
             return true;
         }
         if wrap {
@@ -1424,5 +1584,493 @@ impl crate::control::HostedControl for Router {
         if event == FocusEvent::Lost {
             self.set_focus(None);
         }
+    }
+
+    /// Whatever its grabbed node says.
+    fn claims_drag(&self, _part: ControlPart) -> bool {
+        self.grab
+            .get()
+            .is_some_and(|g| self.node(g.index).control.claims_drag(g.part))
+    }
+}
+
+/// Scroll panes (docs/design/20261023_02_SCROLL_PANE_PLAN.md).
+impl Router {
+    /// Move time on by `dt_secs`: flings, overscroll springs and scroll
+    /// indicators move on, in this router and in the routers nested in it.
+    /// Returns whether anything is still moving or fading, so the host keeps
+    /// drawing frames while it is.
+    pub fn advance(&self, dt_secs: f32) -> bool {
+        self.clocked.set(true);
+        let dt = dt_secs.max(0.0);
+        let now = self.time.get() + f64::from(dt);
+        self.time.set(now);
+        let theme = self.scroll_theme.get();
+        self.update_panes();
+        let mut busy = false;
+        for node in self.nodes.iter().flatten() {
+            let any: &dyn Any = node.control.as_ref();
+            if let Some(pane) = any.downcast_ref::<ScrollPane>() {
+                let limit = pane.overscroll_limit();
+                let shows = pane.shows_indicator();
+                busy |= pane.state().with(|s| {
+                    let moved = s.tick(dt, now, &theme, limit);
+                    moved
+                        || s.is_coasting(&theme)
+                        || (shows && s.indicator_alpha(now, &theme) > 0.0)
+                });
+            } else if let Some(inner) = any.downcast_ref::<Router>() {
+                busy |= inner.advance(dt);
+            }
+        }
+        busy
+    }
+
+    /// Scroll a pane to `offset` (its component along the pane's axis,
+    /// clamped to the range), stopping any fling. A sticky pane follows its
+    /// edge again when this reaches it.
+    pub fn scroll_to(&self, pane: NodeId, offset: [f32; 2]) {
+        let Some(index) = self.index(pane) else {
+            return;
+        };
+        let Some(p) = self.scroll_at(index) else {
+            return;
+        };
+        self.update_pane(index, p);
+        let now = self.time.get();
+        p.state().with(|s| s.scroll_to(p.axis().of(offset), now));
+    }
+
+    /// Scroll a pane by `delta` (positive: towards the end of the content).
+    pub fn scroll_by(&self, pane: NodeId, delta: [f32; 2]) {
+        let Some(index) = self.index(pane) else {
+            return;
+        };
+        let Some(p) = self.scroll_at(index) else {
+            return;
+        };
+        self.update_pane(index, p);
+        let now = self.time.get();
+        p.state().with(|s| {
+            let to = s.offset() + p.axis().of(delta);
+            s.scroll_to(to, now);
+        });
+    }
+
+    /// Scroll every pane above `node` the least that brings it into view:
+    /// all of it when it fits, else its leading edge.
+    pub fn scroll_into_view(&self, node: NodeId) {
+        if let Some(index) = self.index(node) {
+            self.bring_into_view(index);
+        }
+    }
+
+    /// A screen point in `node`'s coordinates: the screen's, plus the offset
+    /// of every pane above it.
+    pub fn to_content(&self, node: NodeId, screen: [f32; 2]) -> [f32; 2] {
+        self.index(node)
+            .map_or(screen, |index| self.local(index, screen))
+    }
+
+    /// `node`'s bounds on the screen, clipped by every pane above it; `None`
+    /// when none of it is in view or it is hidden.
+    pub fn visible_bounds(&self, node: NodeId) -> Option<Rect> {
+        let index = self.index(node)?;
+        if !self.shown(index) {
+            return None;
+        }
+        let mut rect = self.node(index).control.bounds();
+        let mut at = self.node(index).parent;
+        while let Some(i) = at {
+            if let Some(p) = self.scroll_at(i) {
+                let d = p.drawn_offset();
+                rect.x -= d[0];
+                rect.y -= d[1];
+                rect = intersect(rect, p.viewport());
+                if rect.w <= 0.0 || rect.h <= 0.0 {
+                    return None;
+                }
+            }
+            at = self.node(i).parent;
+        }
+        Some(rect)
+    }
+
+    /// Whether neither a node nor any ancestor is hidden.
+    fn shown(&self, index: usize) -> bool {
+        self.chain(index)
+            .iter()
+            .all(|&i| !self.node(i).flags.contains(NodeFlags::HIDDEN))
+    }
+
+    /// What turns a screen point into the coordinates of the node at
+    /// `index`: the drawn offsets of the panes above it.
+    fn shift_of(&self, index: usize) -> [f32; 2] {
+        let mut shift = [0.0, 0.0];
+        let mut at = self.node(index).parent;
+        while let Some(i) = at {
+            if let Some(p) = self.scroll_at(i) {
+                shift = add(shift, p.drawn_offset());
+            }
+            at = self.node(i).parent;
+        }
+        shift
+    }
+
+    /// A screen point in the coordinates of the node at `index`.
+    fn local(&self, index: usize, pos: [f32; 2]) -> [f32; 2] {
+        add(pos, self.shift_of(index))
+    }
+
+    /// A pointer event in the coordinates of the node at `index`.
+    fn map_event(&self, index: usize, event: MouseEvent) -> MouseEvent {
+        let s = self.shift_of(index);
+        if s == [0.0, 0.0] {
+            return event;
+        }
+        match event {
+            MouseEvent::Move { pos } => MouseEvent::Move { pos: add(pos, s) },
+            MouseEvent::Down { pos, button } => MouseEvent::Down {
+                pos: add(pos, s),
+                button,
+            },
+            MouseEvent::Up { pos, button } => MouseEvent::Up {
+                pos: add(pos, s),
+                button,
+            },
+            MouseEvent::Click { pos, button } => MouseEvent::Click {
+                pos: add(pos, s),
+                button,
+            },
+            MouseEvent::Scroll { pos, delta } => MouseEvent::Scroll {
+                pos: add(pos, s),
+                delta,
+            },
+            MouseEvent::ScrollPixels { pos, delta } => MouseEvent::ScrollPixels {
+                pos: add(pos, s),
+                delta,
+            },
+            MouseEvent::Drag {
+                start_pos,
+                current_pos,
+                delta,
+                button,
+            } => MouseEvent::Drag {
+                start_pos: add(start_pos, s),
+                current_pos: add(current_pos, s),
+                delta,
+                button,
+            },
+        }
+    }
+
+    /// Bring every visible pane's range up to date.
+    fn update_panes(&self) {
+        for (index, slot) in self.nodes.iter().enumerate() {
+            let Some(node) = slot else {
+                continue;
+            };
+            let any: &dyn Any = node.control.as_ref();
+            if let Some(pane) = any.downcast_ref::<ScrollPane>()
+                && self.shown(index)
+            {
+                self.update_pane(index, pane);
+            }
+        }
+    }
+
+    /// One pane's range: the content's length from the app or the
+    /// children, then anchoring, then the offset clamped, then the anchors
+    /// for next time.
+    fn update_pane(&self, index: usize, pane: &ScrollPane) {
+        let axis = pane.axis();
+        let (vlead, vlen) = axis.span(pane.viewport());
+        let children: Vec<(NodeId, Rect)> = self
+            .node(index)
+            .children
+            .iter()
+            .map(|&c| self.node(c))
+            .filter(|n| !n.flags.contains(NodeFlags::HIDDEN))
+            .map(|n| (n.id, n.control.bounds()))
+            .collect();
+        let content = match pane.content_size() {
+            Some(size) => axis.of(size),
+            None => children
+                .iter()
+                .map(|&(_, b)| {
+                    let (lead, len) = axis.span(b);
+                    lead + len - vlead
+                })
+                .fold(0.0, f32::max),
+        }
+        .max(0.0);
+        let max = (content - vlen).max(0.0);
+        pane.state().with(|s| {
+            // Scrolled into the content, the children the reader sees stay
+            // where they are when content above them changes.
+            if pane.anchoring() && !s.is_following() && !s.is_dragged() && s.offset() > 0.0 {
+                let moved = s.anchors.iter().find_map(|&(id, lead)| {
+                    children
+                        .iter()
+                        .find(|&&(c, _)| c == id)
+                        .map(|&(_, b)| axis.span(b).0 - lead)
+                });
+                if let Some(d) = moved
+                    && d != 0.0
+                {
+                    s.shift(d);
+                }
+            }
+            s.set_range(content, max);
+            let (top, bottom) = (vlead + s.offset(), vlead + s.offset() + vlen);
+            let mut anchors: Vec<(NodeId, f32)> = children
+                .iter()
+                .filter_map(|&(id, b)| {
+                    let (lead, len) = axis.span(b);
+                    (lead < bottom && lead + len > top).then_some((id, lead))
+                })
+                .collect();
+            anchors.sort_by(|a, b| a.1.total_cmp(&b.1));
+            s.anchors = anchors;
+        });
+    }
+
+    /// Scroll the panes above the node at `index` until it is in view.
+    fn bring_into_view(&self, index: usize) {
+        let now = self.time.get();
+        let mut rect = self.node(index).control.bounds();
+        let mut at = self.node(index).parent;
+        while let Some(i) = at {
+            if let Some(p) = self.scroll_at(i) {
+                self.update_pane(i, p);
+                let axis = p.axis();
+                let (lead, len) = axis.span(rect);
+                let (vlead, vlen) = axis.span(p.viewport());
+                let off = p.state().with(|s| s.offset());
+                let to = if len >= vlen || lead < vlead + off {
+                    lead - vlead
+                } else if lead + len > vlead + off + vlen {
+                    lead + len - vlead - vlen
+                } else {
+                    off
+                };
+                if to != off {
+                    p.state().with(|s| s.scroll_to(to, now));
+                }
+                let d = p.drawn_offset();
+                rect.x -= d[0];
+                rect.y -= d[1];
+            }
+            at = self.node(i).parent;
+        }
+    }
+
+    fn pane_handled(&self, index: usize) -> EventResponse {
+        EventResponse::handled(self.node(index).id, ControlPart::Body, None, self.focused())
+    }
+
+    /// Tap or scroll: a press inside a pane that moves past the touch slop
+    /// along the pane's axis moves to the pane; a touch on a coasting pane
+    /// holds it; the `Click` ending a press a pane took is dropped. `None`
+    /// means route as usual.
+    fn pane_input(&self, event: &MouseEvent) -> Option<EventResponse> {
+        let theme = self.scroll_theme.get();
+        let now = self.time.get();
+        // A pane drag whose grab went elsewhere (a layer opened) is over.
+        if let Some((pane, _)) = self.pane_drag.get()
+            && self.grab.get().is_none_or(|g| g.index != pane)
+        {
+            if let Some(p) = self.scroll_at(pane) {
+                p.state().with(|s| s.cancel_drag());
+            }
+            self.pane_drag.set(None);
+        }
+        match *event {
+            MouseEvent::Click { button, .. } if self.drop_click.get() == Some(button) => {
+                self.drop_click.set(None);
+                Some(EventResponse::consumed(None, self.focused()))
+            }
+            MouseEvent::Down { pos, button } => {
+                self.drop_click.set(None);
+                // A touch that stops a fling or a spring is not a tap.
+                let path = self.hit_path(pos);
+                let (index, pane) = path.iter().rev().find_map(|&(i, _)| {
+                    self.scroll_at(i)
+                        .filter(|p| {
+                            self.takes_input(i) && p.state().with(|s| s.is_coasting(&theme))
+                        })
+                        .map(|p| (i, p))
+                })?;
+                let limit = pane.overscroll_limit();
+                let finger = pane.axis().of(pos);
+                pane.state().with(|s| s.begin_drag(finger, now, limit));
+                self.set_grab(Some(Grab {
+                    index,
+                    button,
+                    start_pos: pos,
+                    press_modifiers: self.modifiers.get(),
+                    part: ControlPart::Body,
+                    kept: false,
+                }));
+                self.pane_drag.set(Some((index, button)));
+                Some(self.pane_handled(index))
+            }
+            MouseEvent::Drag {
+                current_pos,
+                button,
+                ..
+            } => {
+                if let Some((index, b)) = self.pane_drag.get()
+                    && b == button
+                {
+                    let pane = self.scroll_at(index)?;
+                    let limit = pane.overscroll_limit();
+                    let finger = pane.axis().of(current_pos);
+                    pane.state().with(|s| s.drag_to(finger, now, limit));
+                    return Some(self.pane_handled(index));
+                }
+                let grab = self.grab.get().filter(|g| g.button == button && !g.kept)?;
+                let d = [
+                    current_pos[0] - grab.start_pos[0],
+                    current_pos[1] - grab.start_pos[1],
+                ];
+                if d[0].abs().max(d[1].abs()) <= theme.touch_slop {
+                    return None;
+                }
+                let vertical = d[1].abs() >= d[0].abs();
+                let take = if self.node(grab.index).control.claims_drag(grab.part) {
+                    None
+                } else {
+                    self.chain(grab.index).into_iter().find(|&i| {
+                        self.scroll_at(i).is_some_and(|p| {
+                            let along = match p.axis() {
+                                ScrollAxis::Vertical => vertical,
+                                ScrollAxis::Horizontal => !vertical,
+                            };
+                            along
+                                && self.takes_input(i)
+                                && (p.overscroll_limit().is_some()
+                                    || p.state().with(|s| s.can_move(-p.axis().of(d))))
+                        })
+                    })
+                };
+                let Some(index) = take else {
+                    self.grab.set(Some(Grab { kept: true, ..grab }));
+                    return None;
+                };
+                self.take_press(grab, index, current_pos);
+                Some(self.pane_handled(index))
+            }
+            MouseEvent::Up { button, .. } => {
+                let (index, b) = self.pane_drag.get()?;
+                if b != button {
+                    return None;
+                }
+                self.pane_drag.set(None);
+                self.set_grab(None);
+                self.drop_click.set(Some(button));
+                if let Some(p) = self.scroll_at(index) {
+                    let clocked = self.clocked.get();
+                    p.state().with(|s| s.release(now, &theme, clocked));
+                }
+                Some(self.pane_handled(index))
+            }
+            _ => None,
+        }
+    }
+
+    /// The pane at `index` takes the press `grab` held: the node is told the
+    /// press is up, and the pane follows the finger from `at`.
+    fn take_press(&self, grab: Grab, index: usize, at: [f32; 2]) {
+        if grab.index != index {
+            let up = self.map_event(
+                grab.index,
+                MouseEvent::Up {
+                    pos: at,
+                    button: grab.button,
+                },
+            );
+            let ctx = self
+                .context(grab.index, grab.part)
+                .with_press_modifiers(Some(grab.press_modifiers));
+            self.node(grab.index).control.handle_mouse(&up, &ctx);
+        }
+        self.set_grab(Some(Grab {
+            index,
+            part: ControlPart::Body,
+            kept: false,
+            ..grab
+        }));
+        self.pane_drag.set(Some((index, grab.button)));
+        if let Some(pane) = self.scroll_at(index) {
+            let limit = pane.overscroll_limit();
+            let finger = pane.axis().of(at);
+            let now = self.time.get();
+            pane.state().with(|s| s.begin_drag(finger, now, limit));
+        }
+    }
+
+    /// A wheel or trackpad scroll the node at `index` did not use: the
+    /// innermost pane around it that can move that way moves. Returns it.
+    fn wheel(&self, index: usize, event: &MouseEvent) -> Option<usize> {
+        let theme = self.scroll_theme.get();
+        let (delta, scale) = match *event {
+            MouseEvent::Scroll { delta, .. } => (delta, theme.wheel_line),
+            MouseEvent::ScrollPixels { delta, .. } => (delta, 1.0),
+            _ => return None,
+        };
+        let now = self.time.get();
+        self.chain(index).into_iter().find(|&i| {
+            self.scroll_at(i).is_some_and(|p| {
+                // Positive moves the content towards its start.
+                let d = -p.axis().of(delta) * scale;
+                self.takes_input(i)
+                    && d != 0.0
+                    && p.state().with(|s| {
+                        if !s.can_move(d) {
+                            return false;
+                        }
+                        let to = s.offset() + d;
+                        s.scroll_to(to, now);
+                        true
+                    })
+            })
+        })
+    }
+
+    /// A key the focused node at `index` did not use: the innermost pane
+    /// around it that the key moves. Returns it.
+    fn pane_key(&self, index: usize, event: &KeyboardEvent) -> Option<usize> {
+        if !event.is_down() || matches!(event, KeyboardEvent::Char { .. }) {
+            return None;
+        }
+        let key = event.key()?;
+        let line = self.scroll_theme.get().wheel_line;
+        let now = self.time.get();
+        self.chain(index).into_iter().find(|&i| {
+            self.scroll_at(i).is_some_and(|p| {
+                let (_, len) = p.axis().span(p.viewport());
+                let page = (len - line).max(line);
+                let (back, forward) = match p.axis() {
+                    ScrollAxis::Vertical => (Key::Up, Key::Down),
+                    ScrollAxis::Horizontal => (Key::Left, Key::Right),
+                };
+                self.takes_input(i)
+                    && p.state().with(|s| {
+                        let o = s.offset();
+                        let to = match key {
+                            k if k == back => o - line,
+                            k if k == forward => o + line,
+                            Key::PageUp => o - page,
+                            Key::PageDown => o + page,
+                            Key::Home => 0.0,
+                            Key::End => s.max(),
+                            _ => return false,
+                        };
+                        s.scroll_to(to, now);
+                        s.offset() != o
+                    })
+            })
+        })
     }
 }
