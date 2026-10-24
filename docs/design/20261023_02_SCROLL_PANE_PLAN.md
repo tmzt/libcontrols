@@ -546,3 +546,29 @@ the pane. A pinned card outside the content stays outside the pane.
    minimum (30 px/s), or Android's (a friction-based spline)?
 6. **Anchoring by default**: on (this plan, like the web's scroll
    anchoring) or opt-in?
+
+## Amendment — 2026-10-23 21:12 EDT: approved, and the open questions settled
+
+The owner approved this plan and its implementation ("approve plan and
+impl", 2026-10-23). The open questions of section 9 are settled as the plan
+already proposes, and this replaces section 9 and the conditional parts of
+sections 3.6, 3.9 and 6:
+
+1. **This plan goes first,** before the press feedback plan (still Draft).
+   It adds `Router::advance(dt_secs: f32) -> bool` and the touch slop as
+   `ScrollTheme::touch_slop` (8 px), and keeps that row of section 3.9's
+   table. With no `NodeState::PRESSED` yet, taking the press from a child
+   (section 3.6, step 3) is the `Up` delivered to it, the dropped `Click`
+   and the moved grab; clearing `PRESSED` and starting its fade join it when
+   the press plan is implemented, which then builds on this plan's
+   `advance` and slop. `Router::cancel_press` likewise arrives with the
+   press plan; until then a host ends a pane's drag by its `Up`. This
+   plan's release is its own, **0.8.0** (section 6's "0.9.0 after the press
+   plan" no longer applies).
+2. **Activation on release everywhere:** `Button` and `Label` activate on
+   `Click` only, inside panes and outside them.
+3. **Wheel precedence:** the node under the pointer first; the pane only
+   when that node returns no action.
+4. **Overscroll:** none; the pane stops at its ends.
+5. **Fling constants:** decay 3.2 /s, minimum 30 px/s, as in section 3.9.
+6. **Anchoring:** on by default, off with `with_anchoring(false)`.
