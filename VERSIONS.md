@@ -222,3 +222,25 @@ name its own hash.
 - Changed, for nodes inside a scroll pane only: events carry positions in
   the node's content coordinates, and `Router::set_focus` and Tab scroll the
   focused node into view.
+
+## 0.9.0 — 2026-10-25 (tag `v0.9.0`)
+
+Cursor and insertion point in Edit (docs/design/20261025_01_EDIT_CURSOR_AND_INSERTION_POINT_PLAN.md).
+The commit is the one tagged `v0.9.0`: the entry is written in that commit,
+which cannot name its own hash.
+
+- **Breaking:** `EditState` gains the public field `cursor: Mutex<usize>`, so
+  struct literals of it need updating (`EditState::new` remains unchanged).
+- Added: `EditState` methods: `cursor(&self) -> usize`, `set_cursor(&self, pos: usize)`,
+  `move_cursor_left(&self)`, `move_cursor_right(&self)`, `move_cursor_home(&self)`,
+  `move_cursor_end(&self)`, `insert_char(&self, ch: char)`, `insert_text(&self, text: &str)`,
+  `delete_backwards(&self) -> bool`, and `delete_forwards(&self) -> bool`.
+- Added: `Edit` methods: `cursor(&self) -> usize`, `set_cursor(&self, pos: usize)`,
+  `with_cursor(self, pos: usize) -> Self`, `char_index_at_x(&self, click_x: f32) -> usize`,
+  and `set_cursor_from_x(&self, click_x: f32)`.
+- Added: `Edit` rendering draws an SDF vertical cursor bar (`SdfKind::Box`, 1.5 px width)
+  in `ctx.theme.accent_color` when focused or active.
+- Added: `Edit::handle_mouse` sets the cursor to the nearest character boundary on
+  left-click, down, or drag.
+- Added: `Edit::handle_keyboard` supports navigation (Left, Right, Home, End), deletion
+  (Backspace, Delete), Space, and character input at the insertion cursor.

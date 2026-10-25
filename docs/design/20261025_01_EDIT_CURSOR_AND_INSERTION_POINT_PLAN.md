@@ -1,7 +1,7 @@
 ---
 title: Cursor and insertion point in Edit
 date: 2026-10-25
-status: In implementation
+status: Implemented
 covers:
   - EditState cursor tracking and UTF-8-safe cursor manipulation
   - Edit drawing of SDF vertical cursor bar when active or focused
@@ -183,3 +183,9 @@ if self.is_active() || ctx.state.contains(NodeState::FOCUSED) {
 ## Amendment — 2026-10-25 18:58 EDT: implementation started
 
 Implementation has started. This document is now immutable.
+
+## Amendment — 2026-10-25 19:02 EDT: implemented
+
+Every step is done and its **Done when:** holds. Implementation commits:
+- Steps 1-4: `5bd956c`
+- Step 5 (release 0.9.0): this commit
