@@ -269,3 +269,15 @@ a9eecc6 (steps 1 to 9, in one commit):
   restore a place before drawing.
 - **Additions:** `ScrollPane::viewport` and `axis`, `ScrollState::is_moving`,
   and a nested `Router`'s `claims_drag` answering for its grabbed node.
+
+## 2026-10-25 18:58 EDT — Plan: edit cursor and insertion point
+
+Planned work: docs/design/20261025_01_EDIT_CURSOR_AND_INSERTION_POINT_PLAN.md
+(In implementation), adding cursor / insertion point support to
+libcontrols' text edit / text input control (`Edit` and `EditState`).
+Tracks insertion cursor position in `EditState` clamped to valid UTF-8
+character boundaries with navigation (Left, Right, Home, End), text
+insertion (`insert_char`, `insert_text`), and deletion (Backspace, Delete);
+draws a vertical SDF cursor bar when active or focused; hit-tests mouse
+clicks and drags to the character boundary nearest to the pointer; and
+handles keyboard navigation and text entry.
