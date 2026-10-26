@@ -281,3 +281,14 @@ insertion (`insert_char`, `insert_text`), and deletion (Backspace, Delete);
 draws a vertical SDF cursor bar when active or focused; hit-tests mouse
 clicks and drags to the character boundary nearest to the pointer; and
 handles keyboard navigation and text entry.
+
+## 2026-10-25 22:52 EDT — Plan: TextArea multi-line text edit control
+
+Planned work: docs/design/20261025_02_TEXT_AREA_CONTROL_PLAN.md
+(In implementation), adding a `TextArea` multi-line text edit control to
+libcontrols. Wraps text across multiple lines fitting within available width,
+shares `EditState` for text storage and UTF-8 cursor positioning, draws
+background, border, text lines, vertical SDF cursor bar and glowing active
+ring, and handles mouse click/drag positioning and multi-line keyboard navigation
+(arrows Up/Down/Left/Right, Home, End, Backspace, Delete, Enter, char insertion).
+
