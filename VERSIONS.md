@@ -244,3 +244,21 @@ which cannot name its own hash.
   left-click, down, or drag.
 - Added: `Edit::handle_keyboard` supports navigation (Left, Right, Home, End), deletion
   (Backspace, Delete), Space, and character input at the insertion cursor.
+
+## 0.9.1 — 2026-10-25 (tag `v0.9.1`)
+
+TextArea multi-line text edit control (docs/design/20261025_02_TEXT_AREA_CONTROL_PLAN.md).
+The commit is the one tagged `v0.9.1`: the entry is written in that commit,
+which cannot name its own hash.
+
+- Added: `TextArea` multi-line text edit control (`src/text_area.rs`) with soft
+  line wrapping, padding, font size, text/border/bg styling, line height,
+  placeholder text, cursor tracking, and active glow ring.
+- Added: `TextAreaState` type alias for `EditState`.
+- Added: `wrap_text`, `LineLayout`, and `cursor_line_and_col` layout helpers.
+- Added: `HostedControl` implementation on `TextArea` supporting mouse click and
+  drag cursor positioning to line and character boundaries, and multi-line
+  keyboard navigation (Up, Down, Left, Right, Home, End) and editing (Enter,
+  Backspace, Delete, character input).
+- Added: `ReadValue<String>` implementation for `TextArea`.
+

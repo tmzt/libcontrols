@@ -1,7 +1,7 @@
 ---
 title: TextArea multi-line text edit control
 date: 2026-10-25
-status: In implementation
+status: Implemented
 covers:
   - TextArea multi-line text input control wrapping text across multiple lines
   - TextAreaState type alias for EditState, reusing UTF-8 cursor positioning and editing primitives
@@ -141,3 +141,10 @@ Given text content, available width `max_width = (rect.w - 2.0 * padding[0]).max
 ## Amendment — 2026-10-25 22:52 EDT: implementation started
 
 Implementation has started. This document is now immutable.
+
+## Amendment — 2026-10-25 22:56 EDT: implemented
+
+Every step is done and its **Done when:** holds. Implementation commits:
+- Steps 1-4: `562e3cc`
+- Step 5 (release 0.9.1): this commit
+
