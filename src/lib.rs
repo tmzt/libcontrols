@@ -8,6 +8,7 @@ pub mod control;
 pub mod drawer;
 pub mod ease;
 pub mod edit;
+pub mod editable_label;
 pub mod event;
 pub mod filter;
 pub mod flags;
@@ -40,6 +41,10 @@ pub use drawer::{
 };
 pub use ease::{CubicBezier, hermite_ease};
 pub use edit::{Edit, EditState};
+pub use editable_label::{
+    EditableLabel, EditableLabelEvent, EditableLabelOptions, EditableLabelParts,
+    EditableLabelResolved, EditableLabelState, EditableLabelTheme,
+};
 pub use event::{
     ControlAction, ControlPart, EventContext, FocusEvent, GestureEvent, InputEvent, Key, KeyState,
     KeyboardEvent, Modifiers, MouseButton, MouseEvent,

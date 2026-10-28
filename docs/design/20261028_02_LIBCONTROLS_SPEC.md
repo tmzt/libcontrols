@@ -703,3 +703,55 @@ Plans `docs/design/20261028_01_DRAWER_PLAN.md` and
    `DrawerOptions` and resolved by `with_theme`: the first control built to
    section 8.5's standard.
 4. **10:** the crate is 0.10.1.
+
+## Amendment — 2026-10-28 18:53 EDT: EditableLabel (sections 6, 8, 10, 11)
+
+Plan `docs/design/20261028_05_EDITABLE_LABEL_PLAN.md`, release 0.10.2
+(`v0.10.2`); the commit is the one that adds `src/editable_label.rs`. This
+adds section 6.15 and extends sections 8, 10 and 11; it replaces no
+earlier text except the version in section 10 and the test counts in 11.
+
+1. **6.15 `EditableLabel` (`src/editable_label.rs`).** One node with two
+   modes over a shared `EditableLabelState` (the committed `text`, a draft
+   `Arc<EditState>`, an `editing` flag and an event queue):
+   `new`, `text`, `set_text`, `is_editing`, `draft`, `draft_state`,
+   `set_draft` (a soft keyboard's whole-text update, cursor to the end),
+   `begin_edit`, `confirm`, `cancel`, `clear`, `take_events` of
+   `EditableLabelEvent` (`#[non_exhaustive]`: `Started`,
+   `Confirmed(String)`, `Cancelled`, `Cleared`). Display mode draws the
+   text (or the placeholder in the placeholder colour) from the left with
+   4 px padding and a pencil (six `push_line` segments) in a
+   `button_width` button at the right; editing draws an `Edit` over the
+   draft (align Left) in what is left minus `gap`, the placeholder over an
+   empty field, a check (two segments) in place of the pencil and, when
+   `clear` is on and the draft is not empty, an X (two segments) left of
+   it. Parts: `EditableLabel::PENCIL`, `CONFIRM`, `CLEAR`
+   (`ControlPart::Custom`), `TEXT` (`Label`), `FIELD` (`NumericBox`,
+   `Edit`'s); `parts(&resolved) -> EditableLabelParts`, `shown_text`,
+   `shows_placeholder`, `clear_shown`, `resolved(&ControlTheme)`. Buttons
+   act on `Click`; the text starts editing on `Click` only with
+   `label_edits`; the field takes `Down`/`Click`/`Drag` and keys as
+   `Edit`, and claims the drag. Enter confirms; `Key::Escape` and
+   `Key::Back` cancel; `FocusEvent::Lost` while editing cancels (so the
+   router's own Escape, which clears the focus, cancels, as does a press
+   elsewhere); Enter or Space in display mode start editing. `FOCUSABLE`
+   by default, `NodeFlags::NONE` when `read_only` (text only, no pencil,
+   never edits). The control keeps the resolved values of its last draw in
+   a `Cell` for `hit_test`. No keyboard or IME hook was added: the app
+   starts the soft keyboard from `is_editing`/`draft` and feeds it back
+   with `set_draft` and `confirm`. `ReadValue<String>` is the committed
+   text.
+2. **8, theme:** `ControlTheme::editable_label: EditableLabelTheme`
+   (`button_width` 32, `icon_size` 14, `icon_thickness` 1.6, `gap` 4,
+   `pencil_color`/`clear_color`/`placeholder_color` `None` =
+   `muted_text_color`, `confirm_color` `None` = `accent_color`,
+   `field_bg [0.10, 0.13, 0.18, 0.85]`, `field_border [0.15, 0.20, 0.28,
+   0.60]`, `field_border_thickness` 1), overridden per label by
+   `EditableLabelOptions` (one setter per value, plus `font_size`,
+   `text_color` and the per-instance `placeholder`, `clear`, `read_only`,
+   `label_edits`) and resolved by `with_theme` into
+   `EditableLabelResolved`: built to section 8.5's standard.
+3. **10:** the crate is 0.10.2. `EditableLabelEvent`,
+   `EditableLabelTheme`, `EditableLabelOptions`, `EditableLabelResolved`
+   and `EditableLabelParts` are `#[non_exhaustive]`.
+4. **11:** `tests/editable_label.rs` adds 13 router tests.

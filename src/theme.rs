@@ -1,6 +1,7 @@
 //! Visual styling, palettes, and typography metrics for UI controls.
 
 pub use crate::drawer::DrawerTheme;
+pub use crate::editable_label::EditableLabelTheme;
 
 /// Visual theme specifying colors, margins, and geometric styles for UI controls.
 #[derive(Clone, Debug, PartialEq)]
@@ -39,6 +40,10 @@ pub struct ControlTheme {
     /// The defaults every drawer starts from; a drawer's `DrawerOptions`
     /// override them (docs/design/20261028_01_DRAWER_PLAN.md, 11:28 EDT).
     pub drawer: DrawerTheme,
+    /// The defaults every editable label starts from; its
+    /// `EditableLabelOptions` override them
+    /// (docs/design/20261028_05_EDITABLE_LABEL_PLAN.md).
+    pub editable_label: EditableLabelTheme,
 }
 
 /// Scroll pane values (docs/design/20261023_02_SCROLL_PANE_PLAN.md, section
@@ -115,6 +120,7 @@ impl Default for ControlTheme {
             corner_radius: 2.0,
             scroll: ScrollTheme::default(),
             drawer: DrawerTheme::default(),
+            editable_label: EditableLabelTheme::default(),
         }
     }
 }

@@ -304,3 +304,21 @@ uses. The commit is the one tagged `v0.10.1`.
   `DrawerLayers` (`prepare`, `prewarm`, `main_view`, `render_sheet`,
   `composite`, `has_textures`, `texture_bytes` …), `LayerPlan`.
 - Added: `ControlTheme::drawer: DrawerTheme`.
+
+## 0.10.2 — 2026-10-28 (tag `v0.10.2`)
+
+EditableLabel (docs/design/20261028_05_EDITABLE_LABEL_PLAN.md). Additive: a
+new module and types, and a field appended to `ControlTheme` (additive by
+the owner's ruling: a caller builds a theme with `..ControlTheme::default()`).
+
+- Added: `editable_label`: `EditableLabel` (`PENCIL`, `CONFIRM`, `CLEAR`,
+  `TEXT`, `FIELD`; `with_state`, `with_options`, `with_clear`,
+  `with_placeholder`, `with_read_only`, `with_label_edits`,
+  `with_font_size`, `with_text_color`, `text`, `is_editing`, `shown_text`,
+  `shows_placeholder`, `clear_shown`, `resolved`, `parts`, `handle`),
+  `EditableLabelState` (`begin_edit`, `confirm`, `cancel`, `clear`,
+  `draft`, `set_draft`, `draft_state`, `take_events` …),
+  `EditableLabelEvent`, `EditableLabelTheme`, `EditableLabelOptions`
+  (overrides, with `with_theme`), `EditableLabelResolved`,
+  `EditableLabelParts`.
+- Added: `ControlTheme::editable_label: EditableLabelTheme`.

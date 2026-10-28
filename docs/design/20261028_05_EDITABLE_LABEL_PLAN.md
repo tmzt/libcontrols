@@ -1,7 +1,7 @@
 ---
 title: EditableLabel, a label edited in place
 date: 2026-10-28
-status: Draft
+status: In implementation
 covers: >
   A new control, `EditableLabel`: a one-line label with a pencil icon
   button at its right; the pencil (and, when enabled, the label) switches
@@ -302,3 +302,13 @@ re-exported from `theme`.
    Back handling (the companion handles Back before routing)?
 4. Long text is not truncated or clipped (as `Label` today); an ellipsis
    could come with a later Label plan.
+
+## Amendment — 2026-10-28 18:49 EDT: approved; implementation started, the document is now immutable
+
+The owner approved the work in the request this plan comes from: "start a
+subagent to add to libcontrols" (2026-10-28, quoted in full in the
+sources). Implementation starts with this amendment: `status` is `In
+implementation`, and the body above is frozen (AGENTS.md Rule 1.5). The
+open questions of section 5 stay open for the owner; the code follows the
+decisions as written (cancel on focus loss, X keeps editing, Back cancels).
+Departures are recorded in `CHANGES.md`.
