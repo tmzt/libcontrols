@@ -1075,7 +1075,8 @@ mod tests {
     fn hovering_one_control_clears_the_hover_on_another() {
         const CELLS: &[&str] = &["SV - Save", "PR - Print"];
         let grid = Options::new(CELLS, Rect::new(0.0, 0.0, 200.0, 20.0)).with_abbreviate(true);
-        let button = Button::new("CT - Center", Rect::new(0.0, 40.0, 60.0, 20.0));
+        let button =
+            Button::new("CT - Center", Rect::new(0.0, 40.0, 60.0, 20.0)).with_abbreviate(true);
         let mut router = Router::new();
         router.add(None, grid.clone());
         router.add(None, button.clone());
@@ -1280,6 +1281,20 @@ mod tests {
             "a SelectableLabel<u32> is a Control"
         );
         assert!(router.get::<SelectableLabel<u32>>(id).is_some());
+    }
+
+    #[test]
+    fn a_button_abbreviates_only_when_asked() {
+        let r = Rect::new(0.0, 0.0, 60.0, 20.0);
+        let plain = Button::new("CT - Center", r);
+        assert_eq!(plain.shown_text(), "CT - Center");
+        assert_eq!(plain.tooltip(), None);
+        let short = Button::new("CT - Center", r).with_abbreviate(true);
+        assert_eq!(short.shown_text(), "CT");
+        assert_eq!(short.tooltip(), Some("Center"));
+        let bare = Button::new("Center", r).with_abbreviate(true);
+        assert_eq!(bare.shown_text(), "Center");
+        assert_eq!(bare.tooltip(), None);
     }
 
     #[test]

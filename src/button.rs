@@ -145,6 +145,9 @@ pub struct Button {
     pub glow_style: Option<GlowRingStyle>,
     /// Optional custom tooltip style.
     pub tooltip_style: Option<TooltipStyle>,
+    /// Whether a `"XX - Name"` label draws its abbreviation with the name as a
+    /// tooltip. Off by default: the label is drawn as written.
+    pub abbreviate: bool,
 }
 
 impl Button {
@@ -163,6 +166,7 @@ impl Button {
             corner_radius: None,
             glow_style: None,
             tooltip_style: None,
+            abbreviate: false,
         }
     }
 
@@ -245,21 +249,37 @@ impl Button {
         self
     }
 
+    /// Draw a `"XX - Name"` label as its abbreviation with the name as a tooltip
+    /// (`true`), or as written (`false`, the default).
+    pub fn with_abbreviate(mut self, abbreviate: bool) -> Self {
+        self.abbreviate = abbreviate;
+        self
+    }
+
     /// Obtain a borrowed handle to inspect the button's value.
     pub fn handle(&self) -> ControlHandle<'_, Self> {
         ControlHandle::new(self)
     }
 
-    /// The text the button draws, which is its label up to the tooltip's separator.
+    /// The text the button draws: its label as written, or, with
+    /// [`with_abbreviate`](Self::with_abbreviate), up to the tooltip's separator.
     #[inline]
     pub fn shown_text(&self) -> &str {
-        split_label(&self.text).0
+        if self.abbreviate {
+            split_label(&self.text).0
+        } else {
+            &self.text
+        }
     }
 
-    /// The button's tooltip, if its label carries one.
+    /// The button's tooltip, if it abbreviates and its label carries one.
     #[inline]
     pub fn tooltip(&self) -> Option<&str> {
-        split_label(&self.text).1
+        if self.abbreviate {
+            split_label(&self.text).1
+        } else {
+            None
+        }
     }
 
     /// Whether the pointer is over the button.

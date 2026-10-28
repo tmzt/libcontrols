@@ -131,3 +131,11 @@ status becomes `In implementation` with step 1's commit.
 Implementation has started with step 1. The status is `In
 implementation`, and the document is now immutable: it changes only on the
 owner's explicit instruction.
+
+## Amendment — 2026-10-28 12:46 EDT: Button too
+
+The owner (2026-10-28), asked whether `Button` should also draw labels as
+written unless `.with_abbreviate(true)` is set: "yes". `Button` gains
+`abbreviate: bool` (default `false`) and `with_abbreviate`; off,
+`shown_text` is the label as written and `tooltip` is `None`; on, as
+before. It is part of the same breaking 0.10.0, and step 1 includes it.

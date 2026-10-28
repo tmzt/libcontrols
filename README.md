@@ -21,7 +21,7 @@ UI controls drawn as MSDF primitives, owned by a persistent router.
 ## Labels and tooltips
 
 Labels are drawn as written, `"XX - Name"` included. Splitting a label into an
-abbreviation and a tooltip is opt-in per control: `Radio`, `Options` and
+abbreviation and a tooltip is opt-in per control: `Button`, `Radio`, `Options` and
 `SelectableLabel` take `.with_abbreviate(true)` to draw the two-letter
 abbreviation in the cell and show the name as a tooltip on hover (styled with
 `.with_tooltip_style`), for a row too narrow for whole words. A label without
