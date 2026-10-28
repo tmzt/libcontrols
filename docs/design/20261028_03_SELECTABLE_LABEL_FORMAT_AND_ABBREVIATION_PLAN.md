@@ -1,7 +1,7 @@
 ---
 title: SelectableLabel for any Display type, with format_fn and an opt-in abbreviation
 date: 2026-10-28
-status: In implementation
+status: Implemented
 covers:
   - "`SelectableLabel<T>` drawing for every `T: Display`, not only
     `&'static str`"
@@ -139,3 +139,12 @@ written unless `.with_abbreviate(true)` is set: "yes". `Button` gains
 `abbreviate: bool` (default `false`) and `with_abbreviate`; off,
 `shown_text` is the label as written and `tooltip` is `None`; on, as
 before. It is part of the same breaking 0.10.0, and step 1 includes it.
+
+## Amendment — 2026-10-28 12:46 EDT: implemented
+
+Every step is done and its **Done when:** holds. Step 1: `1d2fd40` and
+`4d8530e` (Button). Step 2: the commit tagged `v0.10.0` (0.10.0, with its
+`VERSIONS.md` entry) and the living spec's amendment. One reading of the
+12:30 EDT amendment's "drawn as written": `.with_abbreviate(false)` on
+`Radio` and `Options` now draws the whole `"XX - Name"`, where it drew the
+name alone; `VERSIONS.md` says so.

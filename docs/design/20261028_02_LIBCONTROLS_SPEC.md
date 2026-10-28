@@ -651,3 +651,26 @@ The owner (2026-10-28):
    `docs/design/20261028_03_SELECTABLE_LABEL_FORMAT_AND_ABBREVIATION_PLAN.md`
    (Draft); this spec's section 6.6 and the section 12 gap are amended when
    it is implemented.
+
+## Amendment — 2026-10-28 12:37 EDT: SelectableLabel for any Display type; the abbreviation opt-in (sections 6.6, 6.7, 6.8, 12)
+
+Plan `docs/design/20261028_03_SELECTABLE_LABEL_FORMAT_AND_ABBREVIATION_PLAN.md`,
+commits `1d2fd40` and `4d8530e`, release 0.10.0 (`v0.10.0`). This replaces what sections
+6.2 and 6.6-6.8 say about drawing labels and closes section 12's `SelectableLabel`
+gap.
+
+1. **6.6 `SelectableLabel`:** `DrawControl` is implemented for every `T:
+   Display + 'static`. The centre text is `shown_text()`: `format_fn`'s
+   text, else `Display`'s, cut by `split_label` only when `abbreviate`
+   (default `false`, `with_abbreviate`) is on; `tooltip()` is the name,
+   drawn on hover with `tooltip_style` (`with_tooltip_style`).
+   `SelectableLabelState` has `is_hovered`.
+2. **6.7 `Radio`, 6.8 `Options`:** `abbreviate` defaults to `false`; off, a
+   label is drawn as written (`"XX - Name"` included) with no tooltip; on,
+   as before.
+3. **12:** the `SelectableLabel` gap (`HostedControl` for all `T`,
+   `DrawControl` only for `&'static str`) is closed.
+5. **6.2 `Button`:** `abbreviate` (default `false`, `with_abbreviate`): off,
+   `shown_text` is the label as written and `tooltip` is `None`; on, split
+   as before (commit `4d8530e`).
+4. **10:** the crate is 0.10.0.

@@ -262,3 +262,24 @@ which cannot name its own hash.
   Backspace, Delete, character input).
 - Added: `ReadValue<String>` implementation for `TextArea`.
 
+
+## 0.10.0 — 2026-10-28 (tag `v0.10.0`)
+
+SelectableLabel for any Display type, with format_fn and an opt-in
+abbreviation (docs/design/20261028_03_SELECTABLE_LABEL_FORMAT_AND_ABBREVIATION_PLAN.md).
+The commit is the one tagged `v0.10.0`.
+
+- **Breaking:** `Button`, `Radio` and `Options` now default to drawing a
+  `"XX - Name"` label as written, with no tooltip (`abbreviate: false`).
+  Migration: add `.with_abbreviate(true)` to every `Button`, `Radio` and
+  `Options` that relied on the abbreviation and its tooltip. `.with_abbreviate(false)` now draws the whole
+  label (`"XX - Name"`) rather than the name alone. The abbreviation was added
+  for one minimalist UI and is not what a general UI library is expected to
+  do, so it is opt-in per control.
+- Added: `SelectableLabel<T>` draws for every `T: Display` (it drew only for
+  `&'static str`): its text is `format_fn`'s, else `Display`'s, then split by
+  the `"XX - Name"` convention only with `with_abbreviate(true)`.
+- Added: `Button::abbreviate` and `with_abbreviate`.
+- Added: `SelectableLabel::abbreviate`, `with_abbreviate`, `tooltip_style`,
+  `with_tooltip_style`, `shown_text`, `tooltip`, `is_hovered`;
+  `SelectableLabelState::is_hovered` (field), `is_hovered`, `set_hovered`.
