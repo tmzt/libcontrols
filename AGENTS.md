@@ -1,4 +1,4 @@
-# AGENTS.md — libcontrols: immediate-mode UI controls drawn as MSDF primitives
+# AGENTS.md — libcontrols: immediate-drawing, persisted UI controls as MSDF primitives
 
 ## CRITICAL RULE 0: THE CHANGES.MD PROTOCOL
 
