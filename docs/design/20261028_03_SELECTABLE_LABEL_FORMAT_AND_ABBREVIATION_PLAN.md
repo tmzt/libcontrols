@@ -118,3 +118,10 @@ this disagrees with the body, it wins.
    sections 6.7 and 6.8.
 
 The plan stays `Draft` until the owner approves it.
+
+## Amendment — 2026-10-28 12:32 EDT: approved
+
+The owner (2026-10-28): "approve impl in subagent, test drawer behavior",
+then, asked which plans that covers, "Both". The plan is approved with its
+12:30 EDT amendment (Radio and Options opt-in, a breaking 0.10.0). The
+status becomes `In implementation` with step 1's commit.
