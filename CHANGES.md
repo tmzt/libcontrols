@@ -341,3 +341,18 @@ pass or copy. Departures:
 13. **The default sheet colour** is the theme's `bg_color`, 85% alpha, so
     the sheet is slightly translucent by default (the spec's open question
     3); the tests set an opaque `sheet_color`.
+
+## 2026-10-28 18:55 EDT — EditableLabel (plan 20261028_05_EDITABLE_LABEL_PLAN)
+
+New work: an `EditableLabel` control for the flankr companion's remote
+nickname, at the owner's request ("nickname should use an EditableLabel …
+label with pencil icon which switches to check and optional X (clear)").
+Plan docs/design/20261028_05_EDITABLE_LABEL_PLAN.md, approved by that
+request and in implementation; additive, 0.10.2 (tag `v0.10.2`).
+
+Small departures from the plan's section 3 (interfaces), needed to test and
+use it, all additive: `EditableLabel::TEXT` and `FIELD` part constants
+(`ControlPart::Label` / `NumericBox`, named in the plan's prose but not
+listed as constants); `shown_text()`, `shows_placeholder()` and
+`clear_shown()`, so the placeholder and the X rule can be tested without a
+font atlas.
