@@ -1,7 +1,7 @@
 ---
 title: SelectableLabel for any Display type, with format_fn and an opt-in abbreviation
 date: 2026-10-28
-status: Draft
+status: In implementation
 covers:
   - "`SelectableLabel<T>` drawing for every `T: Display`, not only
     `&'static str`"
@@ -125,3 +125,9 @@ The owner (2026-10-28): "approve impl in subagent, test drawer behavior",
 then, asked which plans that covers, "Both". The plan is approved with its
 12:30 EDT amendment (Radio and Options opt-in, a breaking 0.10.0). The
 status becomes `In implementation` with step 1's commit.
+
+## Amendment — 2026-10-28 12:36 EDT: implementation has started; the document is now immutable
+
+Implementation has started with step 1. The status is `In
+implementation`, and the document is now immutable: it changes only on the
+owner's explicit instruction.

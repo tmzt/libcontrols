@@ -1041,7 +1041,7 @@ mod tests {
         assert_eq!(split_label("high-cut"), ("high-cut", None));
 
         const CELLS: &[&str] = &["SM - Small", "MD - Medium"];
-        let radio = Radio::new(CELLS, Rect::new(0.0, 0.0, 300.0, 18.0));
+        let radio = Radio::new(CELLS, Rect::new(0.0, 0.0, 300.0, 18.0)).with_abbreviate(true);
         assert_eq!(radio.shown_label(0), "SM");
         assert_eq!(radio.tooltip(0), Some("Small"));
         assert_eq!(radio.selected_label(), "SM - Small");
@@ -1074,7 +1074,7 @@ mod tests {
     #[test]
     fn hovering_one_control_clears_the_hover_on_another() {
         const CELLS: &[&str] = &["SV - Save", "PR - Print"];
-        let grid = Options::new(CELLS, Rect::new(0.0, 0.0, 200.0, 20.0));
+        let grid = Options::new(CELLS, Rect::new(0.0, 0.0, 200.0, 20.0)).with_abbreviate(true);
         let button = Button::new("CT - Center", Rect::new(0.0, 40.0, 60.0, 20.0));
         let mut router = Router::new();
         router.add(None, grid.clone());
@@ -1106,6 +1106,7 @@ mod tests {
         const BUTTON_BG: [f32; 4] = [0.0, 0.5, 0.0, 1.0];
 
         let grid = Options::new(CELLS, Rect::new(0.0, 0.0, 200.0, 20.0))
+            .with_abbreviate(true)
             .with_tooltip_style(TooltipStyle::default().with_bg(TIP_BG));
         let button = Button::new("CT", Rect::new(0.0, 40.0, 60.0, 20.0)).with_bg(BUTTON_BG);
         let mut router = Router::new();
@@ -1172,25 +1173,165 @@ mod tests {
     }
 
     #[test]
-    fn abbreviation_is_optional_on_the_multi_cell_controls() {
+    fn abbreviation_is_opt_in_on_the_multi_cell_controls() {
         const NAMED: &[&str] = &["NW - New", "OP - Open", "XY"];
         let rect = Rect::new(0.0, 0.0, 300.0, 18.0);
 
         let radio = Radio::new(NAMED, rect);
-        assert_eq!(radio.shown_label(0), "NW");
-        assert_eq!(radio.tooltip(0), Some("New"));
-        let options = Options::new(NAMED, rect);
-        assert_eq!(options.shown_label(1), "OP");
-        assert_eq!(options.tooltip(1), Some("Open"));
-
-        let radio = Radio::new(NAMED, rect).with_abbreviate(false);
-        assert_eq!(radio.shown_label(0), "New");
+        assert!(!radio.abbreviate, "off by default");
+        assert_eq!(radio.shown_label(0), "NW - New", "drawn as written");
         assert_eq!(radio.tooltip(0), None);
-        let options = Options::new(NAMED, rect).with_abbreviate(false);
-        assert_eq!(options.shown_label(1), "Open");
+        let options = Options::new(NAMED, rect);
+        assert!(!options.abbreviate, "off by default");
+        assert_eq!(options.shown_label(1), "OP - Open", "drawn as written");
         assert_eq!(options.tooltip(1), None);
-
         assert_eq!(radio.shown_label(2), "XY");
         assert_eq!(options.shown_label(2), "XY");
+
+        let radio = Radio::new(NAMED, rect).with_abbreviate(true);
+        assert_eq!(radio.shown_label(0), "NW");
+        assert_eq!(radio.tooltip(0), Some("New"));
+        let options = Options::new(NAMED, rect).with_abbreviate(true);
+        assert_eq!(options.shown_label(1), "OP");
+        assert_eq!(options.tooltip(1), Some("Open"));
+        assert_eq!(radio.shown_label(2), "XY");
+        assert_eq!(radio.tooltip(2), None);
+        assert_eq!(options.shown_label(2), "XY");
+        assert_eq!(options.tooltip(2), None);
+    }
+
+    /// Tooltip background used to find a drawn tip.
+    const TIP_BG: [f32; 4] = [0.5, 0.0, 0.5, 1.0];
+
+    /// Whether `control`, hovered at `pos` in a router, draws a tooltip box.
+    fn draws_tip_when_hovered<C: Control + Clone + 'static>(control: &C, pos: [f32; 2]) -> bool {
+        let mut router = Router::new();
+        router.add(None, control.clone());
+        router.deliver_mouse(MouseEvent::Move { pos });
+        let mut list = DrawList::new();
+        router.render(&mut list, &DrawContext::default());
+        list.instances.iter().any(|inst| inst.color == TIP_BG)
+    }
+
+    #[test]
+    fn radio_and_options_tooltips_follow_the_setting() {
+        const NAMED: &[&str] = &["NW - New", "OP - Open"];
+        let rect = Rect::new(0.0, 0.0, 300.0, 18.0);
+        let tip = TooltipStyle::default().with_bg(TIP_BG);
+
+        let radio = Radio::new(NAMED, rect).with_tooltip_style(tip);
+        assert!(!draws_tip_when_hovered(&radio, [15.0, 9.0]));
+        let radio = Radio::new(NAMED, rect)
+            .with_tooltip_style(tip)
+            .with_abbreviate(true);
+        assert!(draws_tip_when_hovered(&radio, [15.0, 9.0]));
+
+        let options = Options::new(NAMED, rect).with_tooltip_style(tip);
+        assert!(!draws_tip_when_hovered(&options, [15.0, 9.0]));
+        let options = Options::new(NAMED, rect)
+            .with_tooltip_style(tip)
+            .with_abbreviate(true);
+        assert!(draws_tip_when_hovered(&options, [15.0, 9.0]));
+    }
+
+    #[test]
+    fn a_selectable_label_of_str_draws_as_before() {
+        const MODES: &[&str] = &["Option A", "SM - Small"];
+        let rect = Rect::new(0.0, 0.0, 200.0, 36.0);
+        let sel = SelectableLabel::from_static(MODES, rect);
+        assert!(!sel.abbreviate, "off by default");
+        assert_eq!(sel.shown_text(), sel.display_text());
+        assert_eq!(sel.shown_text(), "Option A");
+
+        let mut drawn = DrawList::new();
+        sel.draw(&mut drawn, &DrawContext::default());
+        let lines = drawn
+            .instances
+            .iter()
+            .filter(|inst| matches!(inst.kind, SdfKind::Line { .. }))
+            .count();
+        assert_eq!(lines, 4, "the chevrons as before");
+        assert_eq!(drawn.instances.len(), 4, "and nothing else without a font");
+
+        let whole = sel.clone().with_selected_index(1);
+        assert_eq!(whole.shown_text(), "SM - Small", "drawn as written");
+        assert_eq!(whole.tooltip(), None);
+    }
+
+    #[test]
+    fn a_selectable_label_of_any_display_type_draws_its_format_fn_text() {
+        const SPEEDS: &[u32] = &[1, 2, 4];
+        let rect = Rect::new(0.0, 0.0, 200.0, 36.0);
+
+        let plain = SelectableLabel::new(SPEEDS, rect).with_selected_index(2);
+        assert_eq!(plain.shown_text(), "4", "Display without a format_fn");
+
+        let sel = SelectableLabel::new(SPEEDS, rect)
+            .with_selected_index(1)
+            .with_format_fn(|n| format!("{n}x speed"));
+        assert_eq!(sel.shown_text(), "2x speed");
+
+        let mut router = Router::new();
+        let id = router.add(None, sel.clone());
+        let mut list = DrawList::new();
+        router.render(&mut list, &DrawContext::default());
+        assert!(
+            !list.instances.is_empty(),
+            "a SelectableLabel<u32> is a Control"
+        );
+        assert!(router.get::<SelectableLabel<u32>>(id).is_some());
+    }
+
+    #[test]
+    fn a_selectable_label_splits_its_formatted_text_only_when_asked() {
+        #[derive(Clone, Debug)]
+        enum Sky {
+            Clear,
+            Rain,
+        }
+        impl std::fmt::Display for Sky {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{self:?}")
+            }
+        }
+        fn sky_label(sky: &Sky) -> String {
+            match sky {
+                Sky::Clear => "CS - Clear sky".into(),
+                Sky::Rain => "Rain".into(),
+            }
+        }
+        const SKIES: &[Sky] = &[Sky::Clear, Sky::Rain];
+        let rect = Rect::new(0.0, 0.0, 200.0, 36.0);
+        let tip = TooltipStyle::default().with_bg(TIP_BG);
+        let centre = [100.0, 18.0];
+
+        let off = SelectableLabel::new(SKIES, rect)
+            .with_format_fn(sky_label)
+            .with_tooltip_style(tip);
+        assert_eq!(off.shown_text(), "CS - Clear sky", "drawn whole when off");
+        assert_eq!(off.tooltip(), None);
+        assert!(!draws_tip_when_hovered(&off, centre));
+
+        let on = SelectableLabel::new(SKIES, rect)
+            .with_format_fn(sky_label)
+            .with_tooltip_style(tip)
+            .with_abbreviate(true);
+        assert_eq!(on.shown_text(), "CS");
+        assert_eq!(on.tooltip().as_deref(), Some("Clear sky"));
+        assert!(!on.is_hovered());
+        let mut quiet = DrawList::new();
+        on.draw_overlay(&mut quiet, &DrawContext::default());
+        assert!(quiet.instances.is_empty(), "no tip until hovered");
+        assert!(draws_tip_when_hovered(&on, centre), "the name on hover");
+
+        let plain_on = SelectableLabel::new(SKIES, rect)
+            .with_format_fn(sky_label)
+            .with_abbreviate(true)
+            .with_selected_index(1);
+        assert_eq!(plain_on.shown_text(), "Rain", "no separator: as written");
+        assert_eq!(plain_on.tooltip(), None);
+        let plain_off = plain_on.clone().with_abbreviate(false);
+        assert_eq!(plain_off.shown_text(), "Rain");
+        assert_eq!(plain_off.tooltip(), None);
     }
 }

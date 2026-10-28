@@ -158,8 +158,9 @@ pub struct Options {
     pub glow_style: Option<GlowRingStyle>,
     /// Optional custom tooltip style.
     pub tooltip_style: Option<TooltipStyle>,
-    /// Whether a `"XX - Name"` label draws its abbreviation with the name as a tooltip (the
-    /// default), or the name itself with no tooltip.
+    /// Whether a `"XX - Name"` label draws its abbreviation with the name as a tooltip on
+    /// hover. Off by default: the label is drawn as written, separator included, with no
+    /// tooltip; the split is opt-in with `with_abbreviate(true)`.
     pub abbreviate: bool,
 }
 
@@ -187,7 +188,7 @@ impl Options {
             corner_radius: Some(3.0),
             glow_style: None,
             tooltip_style: None,
-            abbreviate: true,
+            abbreviate: false,
         }
     }
 
@@ -292,8 +293,8 @@ impl Options {
         self
     }
 
-    /// Draw abbreviations with tooltips (`true`, the default) or the full names with none
-    /// (`false`).
+    /// Split `"XX - Name"` labels into the abbreviation drawn and the name as a tooltip on
+    /// hover (`true`), or draw them as written with no tooltip (`false`, the default).
     pub fn with_abbreviate(mut self, abbreviate: bool) -> Self {
         self.abbreviate = abbreviate;
         self
@@ -409,18 +410,11 @@ impl Options {
     }
 
     /// The text cell `index` draws: its label up to the tooltip's separator when abbreviating,
-    /// or the name after it when not.
+    /// or the label as written when not.
     #[inline]
     pub fn shown_label(&self, index: usize) -> &'static str {
         self.label(index)
-            .map(|l| {
-                let (short, name) = split_label(l);
-                if self.abbreviate {
-                    short
-                } else {
-                    name.unwrap_or(short)
-                }
-            })
+            .map(|l| if self.abbreviate { split_label(l).0 } else { l })
             .unwrap_or("")
     }
 

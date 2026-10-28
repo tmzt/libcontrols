@@ -778,6 +778,7 @@ fn dialog() -> ModalDialog {
 
 fn tip_grid(rect: Rect) -> Options {
     let grid = Options::new(&["SV - Save"], rect)
+        .with_abbreviate(true)
         .with_tooltip_style(TooltipStyle::default().with_bg(TIP_BG));
     grid.set_hover(Some(ControlPart::Custom(0)));
     grid
@@ -1705,6 +1706,7 @@ fn each_level_draws_its_own_backdrop_bottom_to_top() {
 fn the_stack_draws_after_every_base_overlay() {
     let mut env = env(instant());
     let grid = Options::new(&["SV - Save"], Rect::new(10.0, 10.0, 100.0, 20.0))
+        .with_abbreviate(true)
         .with_tooltip_style(TooltipStyle::default().with_bg(TIP_BG));
     let hovered = Arc::clone(&grid.state);
     env.router.add(None, grid);

@@ -863,6 +863,7 @@ fn a_panel_childs_tooltip_draws_above_a_later_node() {
     let grid = router.add(
         Some(panel),
         Options::new(&["SV - Save"], Rect::new(10.0, 10.0, 100.0, 20.0))
+            .with_abbreviate(true)
             .with_tooltip_style(TooltipStyle::default().with_bg(TIP_BG)),
     );
     router.add(None, Painter::new(0.9));

@@ -3,7 +3,7 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use libmsdf::drawlist::{DrawList, LINE_BOX_RATIO, SdfInstance, SdfKind};
 
@@ -12,6 +12,7 @@ use crate::flags::NodeState;
 use crate::handle::{ControlHandle, ReadValue};
 use crate::rect::Rect;
 use crate::ring::{GlowRingStyle, draw_glowing_ring};
+use crate::tooltip::{TooltipStyle, draw_tooltip, split_label};
 use crate::traits::{DrawContext, DrawControl};
 
 /// Mutable runtime state for a selectable label control.
@@ -21,6 +22,8 @@ pub struct SelectableLabelState<T: 'static> {
     pub selected_index: AtomicUsize,
     /// Currently active focus part.
     pub active_part: Mutex<ArrowLabelActive>,
+    /// Whether the pointer is over the control.
+    pub is_hovered: AtomicBool,
     _marker: PhantomData<&'static T>,
 }
 
@@ -30,6 +33,7 @@ impl<T: 'static> SelectableLabelState<T> {
         Self {
             selected_index: AtomicUsize::new(selected_index),
             active_part: Mutex::new(ArrowLabelActive::None),
+            is_hovered: AtomicBool::new(false),
             _marker: PhantomData,
         }
     }
@@ -56,6 +60,18 @@ impl<T: 'static> SelectableLabelState<T> {
     #[inline]
     pub fn set_active_part(&self, part: ArrowLabelActive) {
         *self.active_part.lock().unwrap() = part;
+    }
+
+    /// Whether the pointer is over the control.
+    #[inline]
+    pub fn is_hovered(&self) -> bool {
+        self.is_hovered.load(Ordering::Relaxed)
+    }
+
+    /// Record whether the pointer is over the control.
+    #[inline]
+    pub fn set_hovered(&self, hovered: bool) {
+        self.is_hovered.store(hovered, Ordering::Relaxed);
     }
 }
 
@@ -84,6 +100,11 @@ pub struct SelectableLabel<T: 'static> {
     pub glow_style: Option<GlowRingStyle>,
     /// Custom string formatter for typed items.
     pub format_fn: Option<fn(&T) -> String>,
+    /// Optional custom tooltip style.
+    pub tooltip_style: Option<TooltipStyle>,
+    /// Whether a `"XX - Name"` text draws its abbreviation with the name as a tooltip on
+    /// hover. Off by default: the text is drawn as written, separator included.
+    pub abbreviate: bool,
 }
 
 impl SelectableLabel<&'static str> {
@@ -101,6 +122,8 @@ impl SelectableLabel<&'static str> {
             bg_color: None,
             glow_style: None,
             format_fn: None,
+            tooltip_style: None,
+            abbreviate: false,
         }
     }
 }
@@ -120,6 +143,8 @@ impl<T: 'static> SelectableLabel<T> {
             bg_color: None,
             glow_style: None,
             format_fn: None,
+            tooltip_style: None,
+            abbreviate: false,
         }
     }
 
@@ -167,6 +192,25 @@ impl<T: 'static> SelectableLabel<T> {
     pub fn with_format_fn(mut self, format_fn: fn(&T) -> String) -> Self {
         self.format_fn = Some(format_fn);
         self
+    }
+
+    /// Set custom tooltip style.
+    pub fn with_tooltip_style(mut self, style: TooltipStyle) -> Self {
+        self.tooltip_style = Some(style);
+        self
+    }
+
+    /// Split a `"XX - Name"` text into the abbreviation drawn and the name as a tooltip on
+    /// hover (`true`), or draw it as written with no tooltip (`false`, the default).
+    pub fn with_abbreviate(mut self, abbreviate: bool) -> Self {
+        self.abbreviate = abbreviate;
+        self
+    }
+
+    /// Whether the pointer is over the control.
+    #[inline]
+    pub fn is_hovered(&self) -> bool {
+        self.state.is_hovered()
     }
 
     /// Set arrow touch target width.
@@ -279,9 +323,28 @@ impl<T: std::fmt::Display + 'static> SelectableLabel<T> {
                 .unwrap_or_default()
         }
     }
+
+    /// The text the label draws: `display_string`, cut to its abbreviation when
+    /// abbreviating and it carries the `" - "` separator.
+    pub fn shown_text(&self) -> String {
+        let text = self.display_string();
+        if self.abbreviate {
+            split_label(&text).0.to_owned()
+        } else {
+            text
+        }
+    }
+
+    /// The tooltip behind the selected item: the name after the separator, when abbreviating.
+    pub fn tooltip(&self) -> Option<String> {
+        if !self.abbreviate {
+            return None;
+        }
+        split_label(&self.display_string()).1.map(str::to_owned)
+    }
 }
 
-impl DrawControl for SelectableLabel<&'static str> {
+impl<T: std::fmt::Display + 'static> DrawControl for SelectableLabel<T> {
     fn draw(&self, list: &mut DrawList, ctx: &DrawContext) {
         let (left_rect, center_rect, right_rect) = self.sub_rects();
         let font_size = ctx.font_size(self.font_size);
@@ -339,7 +402,8 @@ impl DrawControl for SelectableLabel<&'static str> {
         list.push_line(r_top, r_mid, self.chevron_thickness, right_col);
         list.push_line(r_mid, r_bot, self.chevron_thickness, right_col);
 
-        let text = self.display_text();
+        let shown = self.shown_text();
+        let text = shown.as_str();
         let text_advance = ctx.text_advance(text, font_size);
         let line_box_h = font_size * LINE_BOX_RATIO;
         let pen_x = center_rect.x + (center_rect.w - text_advance) * 0.5;
@@ -367,6 +431,17 @@ impl DrawControl for SelectableLabel<&'static str> {
             ArrowLabelActive::EntireControl => {
                 draw_glowing_ring(list, self.rect, &glow_style, &ctx.theme);
             }
+        }
+    }
+
+    fn draw_overlay(&self, list: &mut DrawList, ctx: &DrawContext) {
+        if !self.is_hovered() {
+            return;
+        }
+        if let Some(tip) = self.tooltip() {
+            let style = self.tooltip_style.unwrap_or_default();
+            let (_, center_rect, _) = self.sub_rects();
+            draw_tooltip(list, ctx, center_rect, &tip, &style);
         }
     }
 }
@@ -479,6 +554,10 @@ impl<T: 'static> HostedControl for SelectableLabel<T> {
         } else {
             None
         }
+    }
+
+    fn set_hover(&self, hover: Option<ControlPart>) {
+        self.state.set_hovered(hover.is_some());
     }
 }
 

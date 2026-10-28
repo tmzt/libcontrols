@@ -20,11 +20,14 @@ UI controls drawn as MSDF primitives, owned by a persistent router.
 
 ## Labels and tooltips
 
-A label written as `"XX - Name"` draws the two-letter abbreviation in its cell
-and shows the name as a tooltip on hover. `Radio` and `Options` take
-`.with_abbreviate(false)` to draw the full name instead, with no tooltip, when
-the row has room for whole words. A label without the `" - "` separator is drawn
-as written.
+Labels are drawn as written, `"XX - Name"` included. Splitting a label into an
+abbreviation and a tooltip is opt-in per control: `Radio`, `Options` and
+`SelectableLabel` take `.with_abbreviate(true)` to draw the two-letter
+abbreviation in the cell and show the name as a tooltip on hover (styled with
+`.with_tooltip_style`), for a row too narrow for whole words. A label without
+the `" - "` separator is drawn as written either way. `SelectableLabel<T>` draws
+for any `T: Display`: its text comes from `.with_format_fn` when given, else
+from `Display`, and the split, when on, applies to that formatted text.
 
 ## Usage
 
@@ -213,4 +216,4 @@ MIT License. See LICENSE file for details.
 | [TextArea multi-line text edit control](docs/design/20261025_02_TEXT_AREA_CONTROL_PLAN.md) | 2026-10-25 | Implemented | Multi-line text edit control with soft line wrapping, cursor tracking, SDF cursor bar rendering, mouse hit-testing, and multi-line keyboard navigation and editing; additive; implemented and released in 0.9.1 (tag `v0.9.1`). |
 | [Drawer, composited from offscreen layers](docs/design/20261028_01_DRAWER_PLAN.md) | 2026-10-28 | Draft | A `Drawer` (left, right, top or bottom) with a content router, opened and closed by API, edge swipe, drag, fling, scrim tap and Back; while visible, main screen and sheet are kept in wgpu textures redrawn only on change and each frame is one composite driven by an eased uniform `t`, built on wgpu in libcontrols; at `t = 0` no texture, pass or copy, the main view draws straight to the surface; additive (0.9.2); Draft, awaiting the owner. |
 | [libcontrols: the library specification](docs/design/20261028_02_LIBCONTROLS_SPEC.md) | 2026-10-28 | Implemented | Describes the library as it exists at `d53ef99` (0.9.1): a retained `Router` tree, the event model, the control traits, every control, the theme as the code reads it today (with living sections for the controls and the theme), stability and testing, written from the code so theming can be added as an amendment; The living spec of the library, kept current by amendment; AGENTS.md points to it. |
-| [SelectableLabel for any Display type, with format_fn and an opt-in abbreviation](docs/design/20261028_03_SELECTABLE_LABEL_FORMAT_AND_ABBREVIATION_PLAN.md) | 2026-10-28 | Draft | `SelectableLabel<T>` draws for every `T: Display`, its text from `format_fn` or `Display`, then split into an abbreviation and tooltip by the "XX - Name" convention only when `with_abbreviate(true)` is set; additive. Draft, awaiting the owner. |
+| [SelectableLabel for any Display type, with format_fn and an opt-in abbreviation](docs/design/20261028_03_SELECTABLE_LABEL_FORMAT_AND_ABBREVIATION_PLAN.md) | 2026-10-28 | In implementation | `SelectableLabel<T>` draws for every `T: Display`, its text from `format_fn` or `Display`, then split into an abbreviation and tooltip by the "XX - Name" convention only when `with_abbreviate(true)` is set; `Radio` and `Options` also draw labels as written unless `with_abbreviate(true)` (breaking, 0.10.0). In implementation. |
