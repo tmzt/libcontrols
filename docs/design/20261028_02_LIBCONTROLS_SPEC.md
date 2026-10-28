@@ -633,3 +633,21 @@ characterisation is read as this. `AGENTS.md`'s heading now reads
 "libcontrols: immediate-drawing, persisted UI controls as MSDF primitives"
 (commit after `c1daa98`); the initial commit's wording (section 1) stays
 as the record.
+
+## Amendment — 2026-10-28 12:28 EDT: open question 4 answered; open question 3 clarified
+
+The owner (2026-10-28):
+
+1. **Open question 3** (`ControlTheme.bg_color`): asked "bg_color defaults
+   to black?"; it defaults to `[0.08, 0.10, 0.14, 0.85]` (`src/theme.rs:97`),
+   a near-black navy at 85% alpha, and no control reads it. Whether it
+   becomes the shared background a control falls back to under the theming
+   standard (section 8.5) or is removed is still open.
+2. **Open question 4** (`SelectableLabel` for any `T`): "chain them, but
+   split should be enabled via setter, it was added for a minimalist ui but
+   this is a common UI library". `format_fn` (or `Display`) makes the
+   text, and the `"XX - Name"` split applies to it only when enabled by a
+   setter. The work is
+   `docs/design/20261028_03_SELECTABLE_LABEL_FORMAT_AND_ABBREVIATION_PLAN.md`
+   (Draft); this spec's section 6.6 and the section 12 gap are amended when
+   it is implemented.
