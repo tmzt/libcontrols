@@ -550,3 +550,53 @@ without a GPU.
    theming amendment?
 4. Is `SelectableLabel` meant to draw for any `T` with a `format_fn`, as
    its generic `HostedControl` suggests?
+
+## Amendment — 2026-10-28 11:38 EDT: the theming standard for themed controls (living section 8)
+
+The owner (2026-10-28), in the drawer plan's discussion
+(`docs/design/20261028_01_DRAWER_PLAN.md`, the 11:28 EDT amendment): "theme
+as defaults, options as override with a helper taking the theme as input
+(such with_theme)", then "that should be the standard for themed
+components", and on versions: "right, it's additive, a caller can always
+use ..default". This adds section 8.5. Sections 8.1-8.4 stay the record of
+what the code does at `d53ef99`; 8.5 is the standard that new controls
+follow and existing ones move to.
+
+### 8.5 The standard for a themed control
+
+For a control `X` with values an app themes:
+
+1. **Defaults in the theme.** `ControlTheme` has a field `x: XTheme`
+   holding the app-wide defaults for every `X`. `XTheme` is
+   `#[non_exhaustive]`, `Clone + Debug + PartialEq` (`Copy` when its
+   fields are), with a public `Default` that gives the values the control
+   uses today. Values several controls share (`text_color`,
+   `default_font_size`, `corner_radius`, the active ring's colours) stay
+   flat `ControlTheme` fields, and `XTheme` does not repeat them.
+2. **Overrides in the options.** `XOptions` has the same values as
+   `Option`s, `None` meaning "the theme's", with one builder setter per
+   field (`.size(..)`, `.scrim(..)` …) and a `Default` that overrides
+   nothing. It also holds per-instance settings that have no theme default
+   (a drawer's edge, a pane's axis).
+3. **`XOptions::with_theme(&self, theme: &XTheme) -> XResolved`** resolves
+   them: each `Some` wins, each `None` takes the theme's value.
+   `XResolved` has plain values and is what the control reads. The control
+   keeps its `XOptions` and resolves against the theme it is drawn with
+   (`DrawContext.theme`, section 8.3), so a theme change reaches every
+   value an instance did not override.
+4. **Versions.** Appending `x: XTheme` to `ControlTheme` is additive by
+   the owner's ruling (a caller builds a theme with
+   `..ControlTheme::default()`), and so are new `XTheme`, `XOptions` and
+   `XResolved` types and fields appended to them: a patch release.
+5. **Existing controls.** Today's per-control `Option` override fields
+   read through `unwrap_or(ctx.theme.x)` (section 8.3) are this pattern
+   without its types. A control moves to the standard by gaining its
+   `XTheme`/`XOptions`/`with_theme`, keeping its existing `with_*`
+   setters as calls that set the matching override, so the move is
+   additive. The values of section 8.4 that an app would theme move into
+   the control's `XTheme`. Each move is its own plan.
+6. **First users.** The drawer (`docs/design/20261028_01_DRAWER_PLAN.md`,
+   `DrawerTheme`, `DrawerOptions`, `DrawerResolved`) is the first
+   control built to it. `ScrollTheme` (section 8.2) is the theme half
+   already; `ScrollPane`'s `with_overscroll`, `with_background` and
+   `with_indicator` would become `ScrollOptions` overrides.
