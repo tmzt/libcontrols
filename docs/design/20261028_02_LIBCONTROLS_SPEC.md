@@ -621,3 +621,15 @@ previous amendment, and becomes the library's **living spec**:
    reads it first and keeps it current.
 4. **The open questions stay open** for the owner; an answer is recorded
    by amendment.
+
+## Amendment — 2026-10-28 12:22 EDT: immediate drawing, persisted controls (open question 1)
+
+The owner (2026-10-28), answering open question 1: "immediate-drawing,
+persisted controls". libcontrols draws immediately (the router redraws
+every node into a fresh `DrawList` each frame, section 4.1) and keeps its
+controls persisted (the router's retained tree, section 4.2), so neither
+"immediate-mode" alone nor "retained" alone describes it. Section 2's
+characterisation is read as this. `AGENTS.md`'s heading now reads
+"libcontrols: immediate-drawing, persisted UI controls as MSDF primitives"
+(commit after `c1daa98`); the initial commit's wording (section 1) stays
+as the record.
