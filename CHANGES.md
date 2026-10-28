@@ -292,3 +292,52 @@ background, border, text lines, vertical SDF cursor bar and glowing active
 ring, and handles mouse click/drag positioning and multi-line keyboard navigation
 (arrows Up/Down/Left/Right, Home, End, Backspace, Delete, Enter, char insertion).
 
+
+## 2026-10-28 12:50 EDT — Plans: Drawer and DrawerLayout, and their departures
+
+Planned work: docs/design/20261028_01_DRAWER_PLAN.md and
+docs/design/20261028_04_DRAWER_LAYOUT_PLAN.md (both In implementation),
+built in `cf12470` and released as 0.10.1. A `DrawerLayout` with two
+`Router` children (main, and the drawer's content in sheet coordinates)
+holds a call-driven `Drawer`; while the drawer is visible each side is
+drawn into a wgpu texture and one composite pass slides the sheet and
+darkens the main view by an eased uniform; at `t = 0` there is no texture,
+pass or copy. Departures:
+
+1. **Plan 01, size defaults:** `DrawerTheme` has `size` (Left/Right, 0.85
+   share, at most 360) and `size_vertical` (Top/Bottom, 0.6 share);
+   `DrawerOptions::size` overrides either.
+2. **Plan 01, `main_mark`** moved from `DrawerLayers` to `Drawer`, so the
+   layout bumps it on main input; the app calls `layout.mark_main()`.
+3. **Plan 01, the uniform** is 80 bytes (frame, viewport, sheet_open,
+   scrim, shadow): no shift, scale or clear terms (scrim only), a viewport
+   rect added; the WGSL field is `frame` since `target` is reserved.
+4. **Plan 01, rounded corners** come from the sheet texture's alpha
+   (`RoundedBoxPerCorner`), not a test in the shader.
+5. **libmsdf writes straight, not premultiplied, alpha** (`blend_over`), so
+   the composite blends the sheet with `mix(c, s.rgb, s.a)`; libmsdf's
+   `BlurPass` overlay assumes premultiplied alpha, which may be a latent
+   bug there (not changed here).
+6. **Plan 01, `draw_direct`** drops `main_start`; content is drawn with a
+   crate-internal `Router::render_at(origin)` so scroll-pane clips land
+   under the translate (plan 04 step 1).
+7. **Plan 01, `DrawerLayers::render_sheet`** takes `Option<&AtlasSet>`.
+8. **Plan 01, the direct path** is decided by `t == 0`, not the Closed
+   phase, so Opening or Dragging at `t = 0` costs nothing; textures are
+   freed (or kept warm) only once Closed; the main layer is redrawn on the
+   first visible frame after a direct one.
+9. **Plan 01, events:** `DrawerReason` has only `App`; `close()` or
+   `settle(false)` at `t = 0` emits Closing then Hidden at once; `settle`
+   with no velocity, or velocity away from the target, uses the Bézier
+   curve, else the Hermite; `open()`/`close()` do nothing while Dragging.
+10. **Plans 01/04, `DrawerRoute::Main`** carries `Option<EventResponse>`;
+    while the drawer is visible a press on the scrim reaches nothing.
+11. **Plan 01, the GPU check** is the integration test `tests/drawer_gpu.rs`
+    (images under `out/drawer/` behind `LIBCONTROLS_EVIDENCE`), not an
+    example; it skips without an adapter and ran on headless Metal.
+12. **Plan 01, extra public queries:** `Drawer::{sheet_at, extent,
+    resolved, set_theme, is_visible}` and the forwarded calls,
+    `DrawerLayers::{has_textures, texture_bytes}`.
+13. **The default sheet colour** is the theme's `bg_color`, 85% alpha, so
+    the sheet is slightly translucent by default (the spec's open question
+    3); the tests set an opaque `sheet_color`.

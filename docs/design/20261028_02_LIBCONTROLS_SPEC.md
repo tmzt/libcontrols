@@ -674,3 +674,32 @@ gap.
    `shown_text` is the label as written and `tooltip` is `None`; on, split
    as before (commit `4d8530e`).
 4. **10:** the crate is 0.10.0.
+
+## Amendment — 2026-10-28 12:50 EDT: Drawer and DrawerLayout (sections 3, 6, 8, 10)
+
+Plans `docs/design/20261028_01_DRAWER_PLAN.md` and
+`docs/design/20261028_04_DRAWER_LAYOUT_PLAN.md`, commit `cf12470`, release
+0.10.1 (`v0.10.1`); the departures are in `CHANGES.md` (this time).
+
+1. **3, dependencies:** `wgpu` 30.0.1 and `bytemuck` 1 are direct
+   dependencies (the versions libmsdf uses). This replaces "libmsdf is the
+   only dependency".
+2. **6.14 `DrawerLayout` and `Drawer`** (`src/drawer/`): a layout with two
+   `Router` children, main filling its rect and the drawer's content in
+   sheet coordinates, placed by one `DrawerEdge` (Left by default) and its
+   size. The `Drawer` is driven by calls only (`open`, `close`, `toggle`,
+   `set_open_now`, `set_progress`, `settle`), with no gestures; its
+   progress `t` eases with Material 3's emphasized curves. `deliver` routes
+   a press to the side its Down landed on, keys to the content while it is
+   showing, and reports scrim points as `DrawerRoute::Scrim`.
+   `DrawerLayers` draws each side into a wgpu texture only while `t > 0`
+   and composites them in one pass (slide, scrim, shadow); at `t = 0` it
+   creates nothing and the main view draws straight to the surface.
+   `src/ease.rs` holds the curves. Only the device, queue, target view and
+   format are taken from the app, and only `main_view()` is given back.
+3. **8, theme:** `ControlTheme::drawer: DrawerTheme` (`size`,
+   `size_vertical`, scrim, sheet colour, corner radius, shadow, durations,
+   curves, `main_updates`, `keep_warm`), overridden per drawer by
+   `DrawerOptions` and resolved by `with_theme`: the first control built to
+   section 8.5's standard.
+4. **10:** the crate is 0.10.1.

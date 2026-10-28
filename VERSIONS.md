@@ -283,3 +283,24 @@ The commit is the one tagged `v0.10.0`.
 - Added: `SelectableLabel::abbreviate`, `with_abbreviate`, `tooltip_style`,
   `with_tooltip_style`, `shown_text`, `tooltip`, `is_hovered`;
   `SelectableLabelState::is_hovered` (field), `is_hovered`, `set_hovered`.
+
+## 0.10.1 — 2026-10-28 (tag `v0.10.1`)
+
+Drawer and DrawerLayout (docs/design/20261028_01_DRAWER_PLAN.md,
+docs/design/20261028_04_DRAWER_LAYOUT_PLAN.md). Additive: new modules and
+types, a field appended to `ControlTheme` (additive by the owner's ruling: a
+caller builds a theme with `..ControlTheme::default()`), and `wgpu` 30.0.1
+and `bytemuck` 1 as direct dependencies at the versions libmsdf already
+uses. The commit is the one tagged `v0.10.1`.
+
+- Added: `ease` (`CubicBezier` with `STANDARD`, `EMPHASIZED_DECELERATE`,
+  `EMPHASIZED_ACCELERATE`; `hermite_ease`).
+- Added: `drawer`: `DrawerState` (`open`, `close`, `toggle`,
+  `set_open_now`, `set_progress`, `settle`, `advance`, `phase`,
+  `progress`, `take_events` …), `DrawerPhase`, `DrawerEvent`,
+  `DrawerReason`, `DrawerEdge` (default `Left`), `DrawerSize`,
+  `MainUpdates`, `DrawerTheme`, `DrawerOptions` (overrides, with
+  `with_theme`), `DrawerResolved`, `DrawerRoute`, `Drawer`, `DrawerLayout`,
+  `DrawerLayers` (`prepare`, `prewarm`, `main_view`, `render_sheet`,
+  `composite`, `has_textures`, `texture_bytes` …), `LayerPlan`.
+- Added: `ControlTheme::drawer: DrawerTheme`.
