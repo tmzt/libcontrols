@@ -1,7 +1,7 @@
 ---
 title: "libcontrols: the library specification"
 date: 2026-10-28
-status: Draft
+status: Implemented
 covers: >
   What libcontrols 0.9.1 is and does at commit d53ef99: its purpose and scope,
   dependencies, rendering model, the router (tree, layers, routing, focus,
@@ -600,3 +600,24 @@ For a control `X` with values an app themes:
    control built to it. `ScrollTheme` (section 8.2) is the theme half
    already; `ScrollPane`'s `with_overscroll`, `with_background` and
    `with_indicator` would become `ScrollOptions` overrides.
+
+## Amendment — 2026-10-28 11:39 EDT: the living spec of the library; status Implemented
+
+The owner (2026-10-28): "it becomes the living spec plan once finished and
+should be added to the AGENTS.md". The document is finished as the
+description of libcontrols at `d53ef99` with the theming standard of the
+previous amendment, and becomes the library's **living spec**:
+
+1. **Status `Implemented`.** It describes code that exists, so it has no
+   steps left; it stays frozen except for its living sections.
+2. **Every section that describes the code is living**, beyond the two the
+   front matter names (6 and 8): when a plan's implementation changes what
+   a section describes (a new control, a router or event change, a theme
+   value, a version), an amendment appended here records the change, names
+   the plan and its commits, and states which earlier text it replaces.
+   Sections 1 (the starting point) and 12 (the gaps at `d53ef99`) are
+   fixed; a gap that is closed is recorded by such an amendment.
+3. **`AGENTS.md` points to it**, so every agent working on the library
+   reads it first and keeps it current.
+4. **The open questions stay open** for the owner; an answer is recorded
+   by amendment.
