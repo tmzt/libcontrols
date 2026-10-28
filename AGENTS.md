@@ -158,3 +158,12 @@ Before writing, modifying or deleting code for a new planned work item:
    chain. The `VERSIONS.md` entry names the dependency with its old and new
    versions and marks the change **Breaking**. A repository with no public
    API (an application) only updates its manifest and lock file.
+
+## The library spec
+
+`docs/design/20261028_02_LIBCONTROLS_SPEC.md` is the living spec of
+libcontrols: what the library is and does, control by control, and the
+standard for themed controls (its section 8.5). Read it before changing the
+library. When an implementation changes what it describes (a new control, a
+router or event change, a theme value, a version), append an amendment to it
+in the same commit, naming the plan and stating which text it replaces.
