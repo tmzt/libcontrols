@@ -1,5 +1,7 @@
 //! Visual styling, palettes, and typography metrics for UI controls.
 
+pub use crate::drawer::DrawerTheme;
+
 /// Visual theme specifying colors, margins, and geometric styles for UI controls.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ControlTheme {
@@ -34,6 +36,9 @@ pub struct ControlTheme {
     /// How scroll panes tell a tap from a drag, fling, overscroll and show
     /// their indicator.
     pub scroll: ScrollTheme,
+    /// The defaults every drawer starts from; a drawer's `DrawerOptions`
+    /// override them (docs/design/20261028_01_DRAWER_PLAN.md, 11:28 EDT).
+    pub drawer: DrawerTheme,
 }
 
 /// Scroll pane values (docs/design/20261023_02_SCROLL_PANE_PLAN.md, section
@@ -109,6 +114,7 @@ impl Default for ControlTheme {
             px_range: 6.0,
             corner_radius: 2.0,
             scroll: ScrollTheme::default(),
+            drawer: DrawerTheme::default(),
         }
     }
 }

@@ -8,3 +8,10 @@ repository = "https://github.com/tmzt/libcontrols"
 
 [dependencies]
 libmsdf = { git = "https://github.com/tmzt/libmsdf", rev = "4de319ce57aea99297de0a805b899276dd90b411" }
+wgpu = "30.0.1"
+bytemuck = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+naga = { version = "30.0.1", features = ["wgsl-in"] }
+pollster = "0.4"
+png = "0.17"

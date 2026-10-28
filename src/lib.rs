@@ -5,6 +5,8 @@
 pub mod arrow_label;
 pub mod button;
 pub mod control;
+pub mod drawer;
+pub mod ease;
 pub mod edit;
 pub mod event;
 pub mod filter;
@@ -31,6 +33,12 @@ pub mod traits;
 pub use arrow_label::{ArrowLabel, ArrowLabelActive, ArrowLabelState};
 pub use button::{Button, ButtonState};
 pub use control::{Control, HostedControl};
+pub use drawer::{
+    Drawer, DrawerEdge, DrawerEvent, DrawerLayers, DrawerLayout, DrawerOptions, DrawerPhase,
+    DrawerReason, DrawerResolved, DrawerRoute, DrawerSize, DrawerState, DrawerTheme, LayerPlan,
+    MainUpdates,
+};
+pub use ease::{CubicBezier, hermite_ease};
 pub use edit::{Edit, EditState};
 pub use event::{
     ControlAction, ControlPart, EventContext, FocusEvent, GestureEvent, InputEvent, Key, KeyState,

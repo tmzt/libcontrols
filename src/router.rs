@@ -584,6 +584,22 @@ impl Router {
         self.draw(list, ctx);
         self.draw_overlay(list, ctx);
     }
+
+    /// [`Router::render`] for a root drawn under a `push_translate` of
+    /// `origin` (a drawer's sheet, docs/design/20261028_04_DRAWER_LAYOUT_PLAN.md):
+    /// scroll panes place their clips, which are in screen pixels, moved by
+    /// `origin`. With `origin` zero it is `render`.
+    pub(crate) fn render_at(&self, list: &mut DrawList, ctx: &DrawContext, origin: [f32; 2]) {
+        let shift = [-origin[0], -origin[1]];
+        self.scroll_theme.set(ctx.theme.scroll);
+        self.update_panes();
+        for &r in &self.roots {
+            self.draw_subtree(list, ctx, r, false, None, shift, false);
+        }
+        for &r in &self.roots {
+            self.draw_subtree(list, ctx, r, false, None, shift, true);
+        }
+    }
 }
 
 impl DrawControl for Router {
