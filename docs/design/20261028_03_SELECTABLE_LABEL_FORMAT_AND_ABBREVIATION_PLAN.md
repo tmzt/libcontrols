@@ -91,3 +91,30 @@ asked.
    existing caller sees, so it is breaking (0.10.0), and the UI that relies
    on it adds `.with_abbreviate(true)`. Or do they keep `true`, with only
    `SelectableLabel` off by default?
+
+## Amendment — 2026-10-28 12:30 EDT: Radio and Options draw labels as written by default; a breaking 0.10.0
+
+The owner (2026-10-28), answering open question 1: "yes, breaking is okay,
+it's not an expected behsvior of a UI library, just document it". Where
+this disagrees with the body, it wins.
+
+1. **`Radio` and `Options` default to `abbreviate: false`**, like
+   `SelectableLabel`: a label is drawn as written, `"XX - Name"`
+   included, with no tooltip, unless the app calls
+   `.with_abbreviate(true)`. With it on they behave as today. Their field
+   docs ("the default") are rewritten to say the split is opt-in.
+2. **This is breaking** (what an existing caller sees changes), so the
+   release is **0.10.0**, not the patch of decision 4. The `VERSIONS.md`
+   entry marks it **Breaking**, says what changed and gives the one-line
+   migration: add `.with_abbreviate(true)` to every `Radio` and
+   `Options` that relied on the abbreviation. The README's "Labels and
+   tooltips" section is rewritten the same way: the convention is opt-in
+   per control.
+3. **Step 1** also flips the two defaults, with tests: a `Radio` and an
+   `Options` drawing `"XX - Name"` whole by default and as "XX" with the
+   tooltip with `.with_abbreviate(true)`; their existing abbreviation tests
+   set it explicitly. **Step 2** releases 0.10.0 with the tag `v0.10.0`
+   (the repo's tag form), and the living spec's amendment also updates
+   sections 6.7 and 6.8.
+
+The plan stays `Draft` until the owner approves it.
