@@ -356,3 +356,19 @@ use it, all additive: `EditableLabel::TEXT` and `FIELD` part constants
 listed as constants); `shown_text()`, `shows_placeholder()` and
 `clear_shown()`, so the placeholder and the X rule can be tested without a
 font atlas.
+
+## 2026-10-28 20:00 EDT — PopupMenu (plan 20261028_06_POPUP_MENU_PLAN)
+
+New work: a `PopupMenu` control asked of libcontrols by flankr's plugin plan
+(~/src/flankr/docs/design/20261028_04_PLUGINS_PLAN.md, 3.6 item 3, step 4)
+for its ⋮ title-bar menu, owner's words "we'll need a popup menu with
+actions, maybe in the title bar?". Plan
+docs/design/20261028_06_POPUP_MENU_PLAN.md, approved with that plan and in
+implementation; additive, 0.10.3 (tag `v0.10.3`).
+
+Small departures, none changing the plan's interfaces:
+1. `PopupMenuOptions` derives `Default` (clippy), with the same values as
+   the plan's: nothing overridden, `dismiss` all on.
+2. Opening through the state does not run the router's `layer_opened`
+   (it needs the router); the app's hover and grab are cleared on the next
+   routed event instead (`run_layers`), as for any layer.
