@@ -2,7 +2,9 @@
 //! and shown as a layer of the router's modal stack
 //! (docs/design/20261028_06_POPUP_MENU_PLAN.md), with toggle items and rows
 //! of cells in shared columns
-//! (docs/design/20261028_10_POPUP_MENU_TOGGLES_AND_COLUMNS_PLAN.md).
+//! (docs/design/20261028_10_POPUP_MENU_TOGGLES_AND_COLUMNS_PLAN.md), and a
+//! radio style for its mark column
+//! (docs/design/20261028_07_POPUP_MENU_RADIO_PLAN.md).
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -248,6 +250,19 @@ impl From<PopupItem> for PopupRow {
     fn from(item: PopupItem) -> Self {
         Self::new(item)
     }
+}
+
+/// How a menu draws its actions' check states. Toggles always draw the
+/// check, whatever the style.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PopupMarkStyle {
+    /// `Some(true)`: a check mark; `Some(false)`: nothing. (As 0.10.3.)
+    #[default]
+    Check,
+    /// `Some(true)`: a ring with a filled dot (⦿); `Some(false)`: a ring
+    /// with a small dot (⊙).
+    Radio,
 }
 
 /// What happened in a menu, queued by its state and drained with
@@ -539,6 +554,18 @@ pub struct PopupMenuTheme {
     pub column_gap: f32,
     /// A dim cell's colour. `None`: the theme's `muted_text_color`.
     pub dim_text_color: Option<[f32; 4]>,
+    /// A radio mark's ring: its outer radius.
+    pub radio_radius: f32,
+    /// A radio mark's ring: its stroke.
+    pub radio_thickness: f32,
+    /// The selected item's dot (⦿).
+    pub radio_dot_radius: f32,
+    /// The other items' dot (⊙); 0: none (a plain ring).
+    pub radio_empty_dot_radius: f32,
+    /// `None`: the item label's colour.
+    pub radio_ring_color: Option<[f32; 4]>,
+    /// `None`: the item label's colour.
+    pub radio_dot_color: Option<[f32; 4]>,
 }
 
 impl Default for PopupMenuTheme {
@@ -571,6 +598,12 @@ impl Default for PopupMenuTheme {
             margin: 8.0,
             column_gap: 12.0,
             dim_text_color: None,
+            radio_radius: 6.0,
+            radio_thickness: 1.5,
+            radio_dot_radius: 3.0,
+            radio_empty_dot_radius: 1.25,
+            radio_ring_color: None,
+            radio_dot_color: None,
         }
     }
 }
@@ -609,6 +642,15 @@ pub struct PopupMenuOptions {
     pub dim_text_color: Option<[f32; 4]>,
     /// Which user actions dismiss it (default: outside tap, Escape, Back).
     pub dismiss: DismissOn,
+    pub radio_radius: Option<f32>,
+    pub radio_thickness: Option<f32>,
+    pub radio_dot_radius: Option<f32>,
+    pub radio_empty_dot_radius: Option<f32>,
+    pub radio_ring_color: Option<[f32; 4]>,
+    pub radio_dot_color: Option<[f32; 4]>,
+    /// How actions' check states are drawn. Per instance, no theme default:
+    /// `Check` unless set.
+    pub marks: PopupMarkStyle,
 }
 
 macro_rules! setter {
@@ -655,11 +697,24 @@ impl PopupMenuOptions {
     setter!(margin: f32);
     setter!(column_gap: f32);
     setter!(dim_text_color: [f32; 4]);
+    setter!(radio_radius: f32);
+    setter!(radio_thickness: f32);
+    setter!(radio_dot_radius: f32);
+    setter!(radio_empty_dot_radius: f32);
+    setter!(radio_ring_color: [f32; 4]);
+    setter!(radio_dot_color: [f32; 4]);
 
     /// Which user actions dismiss it.
     #[must_use]
     pub fn dismiss(mut self, dismiss: DismissOn) -> Self {
         self.dismiss = dismiss;
+        self
+    }
+
+    /// How actions' check states are drawn.
+    #[must_use]
+    pub fn marks(mut self, marks: PopupMarkStyle) -> Self {
+        self.marks = marks;
         self
     }
 
@@ -695,6 +750,14 @@ impl PopupMenuOptions {
             margin: self.margin.unwrap_or(theme.margin),
             column_gap: self.column_gap.unwrap_or(theme.column_gap),
             dim_text_color: self.dim_text_color.or(theme.dim_text_color),
+            radio_radius: self.radio_radius.unwrap_or(theme.radio_radius),
+            radio_thickness: self.radio_thickness.unwrap_or(theme.radio_thickness),
+            radio_dot_radius: self.radio_dot_radius.unwrap_or(theme.radio_dot_radius),
+            radio_empty_dot_radius: self
+                .radio_empty_dot_radius
+                .unwrap_or(theme.radio_empty_dot_radius),
+            radio_ring_color: self.radio_ring_color.or(theme.radio_ring_color),
+            radio_dot_color: self.radio_dot_color.or(theme.radio_dot_color),
         }
     }
 }
@@ -733,6 +796,14 @@ pub struct PopupMenuResolved {
     pub column_gap: f32,
     /// `None`: the theme's `muted_text_color`, read at draw.
     pub dim_text_color: Option<[f32; 4]>,
+    pub radio_radius: f32,
+    pub radio_thickness: f32,
+    pub radio_dot_radius: f32,
+    pub radio_empty_dot_radius: f32,
+    /// `None`: the item label's colour, read at draw.
+    pub radio_ring_color: Option<[f32; 4]>,
+    /// `None`: the item label's colour, read at draw.
+    pub radio_dot_color: Option<[f32; 4]>,
 }
 
 /// A popup menu of actions. The app keeps one, attaches it to its router's
@@ -767,6 +838,40 @@ fn draw_check(list: &mut DrawList, c: [f32; 2], s: f32, t: f32, col: [f32; 4]) {
     let knee = at(-0.10, 0.30);
     list.push_line(at(-0.38, 0.02), knee, t, col);
     list.push_line(knee, at(0.38, -0.30), t, col);
+}
+
+/// A radio mark centred on `c`: a ring of outer radius `r` and stroke
+/// `t`, and a dot of radius `dot` (clamped inside the ring; none if <= 0).
+fn draw_radio(
+    list: &mut DrawList,
+    c: [f32; 2],
+    r: f32,
+    t: f32,
+    dot: f32,
+    ring_col: [f32; 4],
+    dot_col: [f32; 4],
+) {
+    let half = r - t * 0.5;
+    list.push(SdfInstance {
+        kind: SdfKind::Outline {
+            radius: half,
+            thickness: t,
+        },
+        position: [c[0] - half, c[1] - half],
+        size: [2.0 * half, 2.0 * half],
+        color: ring_col,
+        anim: 0,
+    });
+    let d = dot.min(r - t);
+    if d > 0.0 {
+        list.push(SdfInstance {
+            kind: SdfKind::Circle,
+            position: [c[0] - d, c[1] - d],
+            size: [2.0 * d, 2.0 * d],
+            color: dot_col,
+            anim: 0,
+        });
+    }
 }
 
 /// Whether any row reserves the check column: one with a check state, or a
@@ -1146,18 +1251,44 @@ impl DrawControl for PopupMenu {
                     anim: 0,
                 });
             }
-            if item.checked == Some(true) {
-                let c = [
-                    rect.x + r.item_padding * 0.5 + check_w * 0.5,
-                    rect.center()[1],
-                ];
-                draw_check(
+            let label_col = if item.kind == PopupItemKind::Heading {
+                heading_col
+            } else {
+                text_col
+            };
+            let c = [
+                rect.x + r.item_padding * 0.5 + check_w * 0.5,
+                rect.center()[1],
+            ];
+            // Radio marks for actions only; toggles (and headings) keep the
+            // check (the plan's 23:49 EDT amendment).
+            let radio =
+                self.options.marks == PopupMarkStyle::Radio && item.kind == PopupItemKind::Action;
+            match item.checked {
+                Some(selected) if radio => {
+                    let dot = if selected {
+                        r.radio_dot_radius
+                    } else {
+                        r.radio_empty_dot_radius
+                    };
+                    draw_radio(
+                        list,
+                        c,
+                        r.radio_radius,
+                        r.radio_thickness,
+                        dot,
+                        with_alpha(r.radio_ring_color.unwrap_or(label_col), alpha),
+                        with_alpha(r.radio_dot_color.unwrap_or(label_col), alpha),
+                    );
+                }
+                Some(true) => draw_check(
                     list,
                     c,
                     r.check_size,
                     r.check_thickness,
                     with_alpha(check_col, alpha),
-                );
+                ),
+                _ => {}
             }
             if !row.cells.is_empty() {
                 for run in cell_runs.iter().filter(|c| c.row == i) {
@@ -1165,16 +1296,17 @@ impl DrawControl for PopupMenu {
                 }
                 continue;
             }
-            let col = if item.kind == PopupItemKind::Heading {
-                heading_col
-            } else {
-                text_col
-            };
             let pen = [
                 rect.x + r.item_padding + check_w,
                 rect.y + (rect.h - line_box_h) * 0.5,
             ];
-            ctx.draw_text(list, &item.label, pen, font_size, with_alpha(col, alpha));
+            ctx.draw_text(
+                list,
+                &item.label,
+                pen,
+                font_size,
+                with_alpha(label_col, alpha),
+            );
         }
     }
 }
@@ -1483,6 +1615,39 @@ mod tests {
         // Extra shared equally by the Flex columns.
         let w = column_widths(&natural, 0.0, 190.0);
         assert!(approx(w[0], 110.0) && approx(w[1], 60.0) && approx(w[2], 20.0));
+    }
+
+    #[test]
+    fn radio_values_resolve_from_the_theme_and_the_options() {
+        // Plan 20261028_07, step 1.
+        let theme = PopupMenuTheme {
+            radio_dot_radius: 2.0,
+            ..PopupMenuTheme::default()
+        };
+        let r = PopupMenuOptions::new().radio_radius(8.0).with_theme(&theme);
+        assert_eq!(r.radio_radius, 8.0);
+        assert_eq!(r.radio_dot_radius, 2.0);
+        assert_eq!(r.radio_thickness, 1.5);
+        assert_eq!(r.radio_empty_dot_radius, 1.25);
+        assert_eq!(r.radio_ring_color, None);
+        assert_eq!(r.radio_dot_color, None);
+        assert_eq!(PopupMenuOptions::default().marks, PopupMarkStyle::Check);
+        assert_eq!(PopupMarkStyle::default(), PopupMarkStyle::Check);
+        assert_eq!(
+            PopupMenuOptions::new().marks(PopupMarkStyle::Radio).marks,
+            PopupMarkStyle::Radio
+        );
+        let red = [1.0, 0.0, 0.0, 1.0];
+        let r = PopupMenuOptions::new()
+            .radio_thickness(2.0)
+            .radio_empty_dot_radius(0.0)
+            .radio_ring_color(red)
+            .radio_dot_color(red)
+            .with_theme(&theme);
+        assert_eq!(r.radio_thickness, 2.0);
+        assert_eq!(r.radio_empty_dot_radius, 0.0);
+        assert_eq!(r.radio_ring_color, Some(red));
+        assert_eq!(r.radio_dot_color, Some(red));
     }
 
     #[test]

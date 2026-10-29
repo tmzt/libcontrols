@@ -74,7 +74,7 @@ pub use modal::{
 pub use options::{DEFAULT_PER_ROW, DEFAULT_ROW_GAP, MAX_OPTIONS, Options, OptionsState};
 pub use panel::{Panel, PanelData, PanelState};
 pub use popup_menu::{
-    PopupCell, PopupCellWidth, PopupItem, PopupItemKind, PopupMenu, PopupMenuEvent,
+    PopupCell, PopupCellWidth, PopupItem, PopupItemKind, PopupMarkStyle, PopupMenu, PopupMenuEvent,
     PopupMenuLayout, PopupMenuOptions, PopupMenuResolved, PopupMenuState, PopupMenuTheme, PopupRow,
 };
 pub use radio::{DEFAULT_CELL_GAP, DEFAULT_CELL_WIDTH, NO_CELL, Radio, RadioState};

@@ -1,6 +1,6 @@
 [package]
 name = "libcontrols"
-version = "0.10.6"
+version = "0.10.7"
 edition = "2024"
 license = "MIT"
 description = "UI controls (labels, buttons, sliders, radios, option grids, panels, dialogs) drawn as MSDF primitives and owned by a persistent router"

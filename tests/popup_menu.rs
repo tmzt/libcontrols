@@ -3,15 +3,16 @@
 //! outside tap, Escape or Back, placed to fit, themed
 //! (docs/design/20261028_06_POPUP_MENU_PLAN.md); toggle items and rows of
 //! cells in shared columns
-//! (docs/design/20261028_10_POPUP_MENU_TOGGLES_AND_COLUMNS_PLAN.md).
+//! (docs/design/20261028_10_POPUP_MENU_TOGGLES_AND_COLUMNS_PLAN.md); radio
+//! marks (docs/design/20261028_07_POPUP_MENU_RADIO_PLAN.md).
 
 use std::sync::Arc;
 
 use libcontrols::{
     Button, ControlAction, ControlPart, ControlTheme, DismissReason, DrawContext, Key,
     KeyboardEvent, ModalError, ModalStack, ModalState, MouseButton, MouseEvent, PopupCell,
-    PopupCellWidth, PopupItem, PopupMenu, PopupMenuEvent, PopupMenuOptions, PopupMenuState,
-    PopupMenuTheme, PopupRow, Rect, Router, Symbol, TextAlign,
+    PopupCellWidth, PopupItem, PopupMarkStyle, PopupMenu, PopupMenuEvent, PopupMenuOptions,
+    PopupMenuState, PopupMenuTheme, PopupRow, Rect, Router, Symbol, TextAlign,
 };
 use libmsdf::drawlist::{DrawList, SdfKind};
 
@@ -812,4 +813,220 @@ fn a_heading_row_of_cells_takes_no_input_and_separator_cells_make_no_columns() {
     assert_eq!(tap(&f.router, A), None);
     assert!(f.state.is_open());
     assert!(f.state.take_events().is_empty());
+}
+
+// ---- Radio marks (plan 20261028_07, step 2) ----
+//
+// `radio_items()` is 160 wide at x 232, y 54, the check column reserved:
+// rows at x 238..386, y 60..100 (main, selected), 100..140 (heading),
+// 140..180 (b), 180..220 (c, disabled). The marks are centred at x
+// 238 + 14 / 2 + 24 / 2 = 257.
+
+const MARK_X: f32 = 257.0;
+const RADIO_B: [f32; 2] = [300.0, 160.0];
+
+fn radio_items() -> Vec<PopupItem> {
+    vec![
+        PopupItem::action("s/main", "main").with_checked(Some(true)),
+        PopupItem::heading("Subagents"),
+        PopupItem::action("s/b", "b").with_checked(Some(false)),
+        PopupItem::action("s/c", "c")
+            .with_checked(Some(false))
+            .with_enabled(false),
+    ]
+}
+
+fn radio() -> PopupMenuOptions {
+    PopupMenuOptions::new().marks(PopupMarkStyle::Radio)
+}
+
+fn rings(list: &DrawList) -> Vec<&libmsdf::drawlist::SdfInstance> {
+    list.instances
+        .iter()
+        .filter(|i| {
+            matches!(i.kind, SdfKind::Outline { radius, thickness }
+                if approx(radius, 5.25) && approx(thickness, 1.5))
+        })
+        .collect()
+}
+
+fn circles(list: &DrawList) -> Vec<&libmsdf::drawlist::SdfInstance> {
+    list.instances
+        .iter()
+        .filter(|i| matches!(i.kind, SdfKind::Circle))
+        .collect()
+}
+
+fn centre(i: &libmsdf::drawlist::SdfInstance) -> [f32; 2] {
+    [
+        i.position[0] + i.size[0] / 2.0,
+        i.position[1] + i.size[1] / 2.0,
+    ]
+}
+
+fn drawn(options: PopupMenuOptions, items: Vec<PopupItem>) -> (Fixture, DrawList) {
+    let f = fixture_with(options);
+    f.state.open(ANCHOR, items);
+    let list = render(&f.router);
+    (f, list)
+}
+
+#[test]
+fn a_radio_menu_draws_a_ring_per_marked_item_and_no_check_lines() {
+    let (_, list) = drawn(radio(), radio_items());
+    let rings = rings(&list);
+    assert_eq!(rings.len(), 3);
+    for (ring, y) in rings.iter().zip([80.0, 160.0, 200.0]) {
+        assert_eq!(ring.size, [10.5, 10.5]);
+        let c = centre(ring);
+        assert!(approx(c[0], MARK_X) && approx(c[1], y), "{c:?}");
+        assert_eq!(ring.anim, 0);
+    }
+    assert_eq!(lines(&list), 0);
+}
+
+#[test]
+fn the_selected_dot_is_filled_and_the_others_small_each_centred_on_its_ring() {
+    let (_, list) = drawn(radio(), radio_items());
+    let circles = circles(&list);
+    assert_eq!(circles.len(), 3);
+    assert_eq!(circles[0].size, [6.0, 6.0]);
+    assert_eq!(circles[1].size, [2.5, 2.5]);
+    assert_eq!(circles[2].size, [2.5, 2.5]);
+    for (dot, y) in circles.iter().zip([80.0, 160.0, 200.0]) {
+        let c = centre(dot);
+        assert!(approx(c[0], MARK_X) && approx(c[1], y), "{c:?}");
+        assert_eq!(dot.anim, 0);
+    }
+}
+
+#[test]
+fn radio_marks_take_the_label_colour_not_the_accent() {
+    let theme = ControlTheme::default();
+    let (_, list) = drawn(radio(), radio_items());
+    let rings = rings(&list);
+    let circles = circles(&list);
+    for i in 0..2 {
+        assert_eq!(rings[i].color, theme.text_color);
+        assert_eq!(circles[i].color, theme.text_color);
+        assert_ne!(rings[i].color, theme.accent_color);
+    }
+    let mut dim = theme.text_color;
+    dim[3] *= 0.4;
+    assert!(approx(rings[2].color[3], dim[3]) && rings[2].color[..3] == dim[..3]);
+    assert!(approx(circles[2].color[3], dim[3]) && circles[2].color[..3] == dim[..3]);
+}
+
+#[test]
+fn an_empty_dot_radius_of_zero_draws_plain_rings() {
+    let (_, list) = drawn(radio().radio_empty_dot_radius(0.0), radio_items());
+    assert_eq!(rings(&list).len(), 3);
+    let circles = circles(&list);
+    assert_eq!(circles.len(), 1);
+    assert_eq!(circles[0].size, [6.0, 6.0]);
+}
+
+#[test]
+fn a_dot_too_big_for_the_ring_is_clamped_inside_it() {
+    let (_, list) = drawn(radio().radio_dot_radius(10.0), radio_items());
+    // Clamped to R - t = 4.5.
+    assert_eq!(circles(&list)[0].size, [9.0, 9.0]);
+}
+
+#[test]
+fn radio_colour_overrides_reach_the_instances() {
+    let red = [1.0, 0.0, 0.0, 1.0];
+    let blue = [0.0, 0.0, 1.0, 1.0];
+    let (_, list) = drawn(
+        radio().radio_ring_color(red).radio_dot_color(blue),
+        radio_items(),
+    );
+    let rings = rings(&list);
+    let circles = circles(&list);
+    assert_eq!(rings[0].color, red);
+    assert_eq!(circles[0].color, blue);
+    assert_eq!(rings[1].color, red);
+    assert_eq!(circles[1].color, blue);
+    // The disabled item's alpha is still multiplied.
+    assert!(approx(rings[2].color[3], 0.4));
+    assert!(approx(circles[2].color[3], 0.4));
+}
+
+#[test]
+fn the_default_check_menu_draws_as_before() {
+    let (_, list) = drawn(PopupMenuOptions::default(), radio_items());
+    assert_eq!(lines(&list), 2);
+    assert!(circles(&list).is_empty());
+    assert!(rings(&list).is_empty());
+}
+
+#[test]
+fn layout_and_input_are_the_same_in_radio_and_check_menus() {
+    let (r, _) = drawn(radio(), radio_items());
+    let (c, _) = drawn(PopupMenuOptions::default(), radio_items());
+    assert_eq!(r.state.layout().unwrap(), c.state.layout().unwrap());
+    assert_eq!(
+        r.state.layout().unwrap().frame,
+        Rect::new(232.0, 54.0, 160.0, 172.0)
+    );
+    for f in [&r, &c] {
+        tap(&f.router, RADIO_B);
+        assert_eq!(f.state.take_events(), vec![chosen("s/b")]);
+        assert!(!f.state.is_open());
+    }
+    // The menu does not move the mark itself.
+    assert_eq!(r.state.items()[0].checked, Some(true));
+    assert_eq!(r.state.items()[2].checked, Some(false));
+}
+
+#[test]
+fn a_toggle_in_a_radio_menu_draws_the_check_not_a_ring() {
+    // The plan's 23:49 EDT amendment.
+    let (f, list) = drawn(
+        radio(),
+        vec![
+            PopupItem::toggle("t/on", "On", true),
+            PopupItem::toggle("t/off", "Off", false),
+            PopupItem::action("s/x", "x").with_checked(Some(true)),
+        ],
+    );
+    // The on toggle's check only; the action's radio ring and dot.
+    assert_eq!(lines(&list), 2);
+    let ring = rings(&list);
+    assert_eq!(ring.len(), 1);
+    assert!(approx(centre(ring[0])[1], 160.0));
+    assert_eq!(circles(&list).len(), 1);
+    // Flipping the off toggle draws a second check, still no ring.
+    tap(&f.router, B);
+    let list = render(&f.router);
+    assert_eq!(lines(&list), 4);
+    assert_eq!(rings(&list).len(), 1);
+}
+
+#[test]
+fn radio_marks_in_rows_with_cells_go_in_the_same_mark_column() {
+    let f = fixture_with(radio());
+    f.state.open_rows(
+        ANCHOR,
+        vec![
+            PopupItem::action("s/main", "main x")
+                .with_checked(Some(true))
+                .with_cells(vec![PopupCell::new("main"), PopupCell::new("x").dim(true)]),
+            PopupItem::action("s/b", "b y")
+                .with_checked(Some(false))
+                .with_cells(vec![PopupCell::new("b"), PopupCell::new("y").dim(true)]),
+        ],
+    );
+    let list = render(&f.router);
+    let layout = f.state.layout().unwrap();
+    let rings = rings(&list);
+    assert_eq!(rings.len(), 2);
+    for (ring, row) in rings.iter().zip(&layout.items) {
+        let c = centre(ring);
+        assert!(approx(c[0], row.x + 7.0 + 12.0) && approx(c[1], row.center()[1]));
+        // Left of the first column.
+        assert!(ring.position[0] + ring.size[0] <= layout.columns[0][0]);
+    }
+    assert_eq!(circles(&list).len(), 2);
+    assert_eq!(lines(&list), 0);
 }

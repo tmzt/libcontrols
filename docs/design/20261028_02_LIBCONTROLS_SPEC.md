@@ -1060,3 +1060,32 @@ the test counts in 11.
 4. **11:** `tests/popup_menu.rs` adds 15 router tests (35 in all), and
    `src/popup_menu.rs` adds 7 unit tests of the cells as drawn and of the
    column arithmetic, in every build.
+
+## Amendment — 2026-10-28 23:54 EDT: PopupMenu radio marks (sections 6.16, 8, 10, 11)
+
+Plan `docs/design/20261028_07_POPUP_MENU_RADIO_PLAN.md`, release 0.10.7
+(`v0.10.7`). This extends sections 6.16, 8, 10 and 11 as amended at
+23:50 EDT; it replaces no earlier text except the version in section 10
+and the test counts in 11.
+
+1. **6.16 `PopupMenu`:** `PopupMenuOptions::marks(PopupMarkStyle)`
+   (`#[non_exhaustive]`: `Check`, the default, and `Radio`) chooses how
+   the mark column draws an action's `checked`. `Check` is as before.
+   `Radio` draws an action's `Some(true)` as a ring with a filled centre
+   dot (⦿) and `Some(false)` as a ring with a small centre dot (⊙): an
+   `Outline` ring of outer radius `radio_radius` and stroke
+   `radio_thickness`, and a `Circle` dot clamped inside it (none when its
+   radius is 0), centred where the check is (in rows with cells too), in
+   the item label's colour unless overridden, at the label's alpha.
+   Toggles (and headings) keep the check mark in either style. Layout,
+   hit testing and input do not depend on the style; the menu does not
+   enforce a single selection.
+2. **8, theme:** `PopupMenuTheme` gains `radio_radius` 6,
+   `radio_thickness` 1.5, `radio_dot_radius` 3, `radio_empty_dot_radius`
+   1.25, `radio_ring_color` and `radio_dot_color` `None` = the item
+   label's colour; `PopupMenuOptions` an override and setter for each and
+   the per-instance `marks`; `PopupMenuResolved` the six values.
+3. **10:** the crate is 0.10.7. `PopupMarkStyle` is `#[non_exhaustive]`.
+4. **11:** `tests/popup_menu.rs` adds 10 router tests (45 in all), and
+   `src/popup_menu.rs` 1 unit test of the radio values' resolution (8 in
+   all), in every build.

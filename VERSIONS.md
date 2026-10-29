@@ -413,3 +413,17 @@ unchanged, and menus without toggles or cells behave as before.
 - Added: `PopupMenuLayout::columns`.
 - Added: `PopupMenuTheme`, `PopupMenuOptions` (with setters) and
   `PopupMenuResolved`: `column_gap`, `dim_text_color`.
+
+## 0.10.7 — 2026-10-28 (tag `v0.10.7`)
+
+PopupMenu radio marks (docs/design/20261028_07_POPUP_MENU_RADIO_PLAN.md).
+Additive: a new open enum, and fields appended to `#[non_exhaustive]`
+structs; menus that do not set `marks` draw as before, and toggles draw
+the check in either style.
+
+- Added: `PopupMarkStyle` (`Check`, the default; `Radio`).
+- Added: `PopupMenuOptions::marks` (field and setter).
+- Added: `PopupMenuTheme`, `PopupMenuOptions` (with setters) and
+  `PopupMenuResolved`: `radio_radius`, `radio_thickness`,
+  `radio_dot_radius`, `radio_empty_dot_radius`, `radio_ring_color`,
+  `radio_dot_color`.

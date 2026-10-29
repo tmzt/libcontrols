@@ -1,7 +1,7 @@
 ---
 title: A radio style for PopupMenu's mark column
 date: 2026-10-28
-status: Draft
+status: In implementation
 covers: >
   A second style for the `PopupMenu`'s mark column, chosen per menu:
   `PopupMenuOptions::marks(PopupMarkStyle::Radio)` draws every item that
@@ -380,3 +380,14 @@ radio marks of `PopupMarkStyle::Radio` apply only to `Action` items with a
 check state. So flankr's volume menu (toggles) shows checks, and its
 subagent dropdown (actions, `Radio`) shows ⦿ and ⊙. Tests add: a toggle in
 a `Radio` menu draws the check, not a ring.
+
+## Amendment — 2026-10-28 23:54 EDT: implementation started; the document is now immutable
+
+Implementation starts with this amendment, in the worktree
+`.claude/worktrees/radio` on the branch `wt-radio` from `0dc8dc2` (0.10.6,
+with the toggles and columns): `status` is `In implementation`, and the
+body above is frozen (AGENTS.md Rule 1.5). The scope is every step, 1-3,
+released as **0.10.7** (the 23:47 EDT amendment), with toggle items
+keeping the check (the 23:49 EDT amendment). The open questions keep
+this plan's own choices: no exported `draw_radio` (1), no per-item style
+(2), no animation (3). Departures are recorded in `CHANGES.md`.
