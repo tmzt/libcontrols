@@ -354,3 +354,16 @@ additive, 0.10.4 (tag `v0.10.4`).
    `PopupItem` to gain a `Default` first.
 3. A dot that animates between items (a fade on re-open) is not covered;
    opening is instant (plan 06, open question 4).
+
+## Amendment — 2026-10-28 23:47 EDT: approved; built as 0.10.7 after the toggles and columns
+
+The owner approved the plan on 2026-10-28 ("approve the radio style plan
+too"). It is approved as written, its open questions left as the body
+leaves them (no exported `draw_radio`, no per-item style, no animation;
+each additive if wanted later). Its version follows release order: 0.10.4
+went to the Scrollbar, 0.10.5 to the MarkdownView and 0.10.6 to the toggle
+items and columns (plan 20261028_10, being built), so this is **0.10.7**,
+built after 0.10.6 lands; its theme fields are appended after 0.10.6's,
+and its marks keep drawing from `checked`, so toggle items take radio
+marks in a `Radio` menu. The status stays `Draft` until the first
+implementing commit (Rule 1.5).
