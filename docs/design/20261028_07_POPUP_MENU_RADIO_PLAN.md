@@ -1,7 +1,7 @@
 ---
 title: A radio style for PopupMenu's mark column
 date: 2026-10-28
-status: In implementation
+status: Implemented
 covers: >
   A second style for the `PopupMenu`'s mark column, chosen per menu:
   `PopupMenuOptions::marks(PopupMarkStyle::Radio)` draws every item that
@@ -391,3 +391,10 @@ released as **0.10.7** (the 23:47 EDT amendment), with toggle items
 keeping the check (the 23:49 EDT amendment). The open questions keep
 this plan's own choices: no exported `draw_radio` (1), no per-item style
 (2), no animation (3). Departures are recorded in `CHANGES.md`.
+
+## Amendment — 2026-10-28 23:56 EDT: implemented
+
+Every step is done and its **Done when:** holds, in d35e2fa (steps 1-3: the
+style and theme values, the drawing and its tests, the spec, README and
+0.10.7, tag `v0.10.7`), with the departures recorded in CHANGES.md.
+Status `Implemented`.
