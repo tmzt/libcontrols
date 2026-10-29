@@ -1020,3 +1020,43 @@ item 3) and "which nothing reads yet" of `bookmark_code_pad` and
    `tests/scrollbar.rs`'s test of a Markdown bookmark drawn as written
    runs only without `markdown`. The crate is tested with no features,
    `--features markdown` and `--features cmark`.
+
+## Amendment — 2026-10-28 23:50 EDT: PopupMenu toggle items and columns (sections 6.16, 8, 10, 11)
+
+Plan `docs/design/20261028_10_POPUP_MENU_TOGGLES_AND_COLUMNS_PLAN.md`,
+release 0.10.6 (`v0.10.6`). This extends sections 6.16, 8, 10 and 11 as
+amended; it replaces no earlier text except, in 6.16, "a choice; the
+menu closes" now holding for actions only, and the version in 10 and
+the test counts in 11.
+
+1. **6.16 `PopupMenu`:** `PopupItemKind::Toggle` (`PopupItem::toggle(id,
+   label, checked)`) is chosen like an action (`is_choosable`: an
+   enabled action or toggle) but flips its `checked` in the state, keeps
+   the menu open and the highlight, and queues `PopupMenuEvent::Toggled {
+   id, checked }` with the new state, not `Chosen`. A toggle whose
+   `checked` is `None` is off and flips to `Some(true)`; any toggle
+   reserves the check column, so a flip never changes the layout. A
+   disabled toggle is drawn at `disabled_alpha` and takes no input. A row
+   may carry cells: `PopupRow { item, cells }` (`PopupRow::new`,
+   `with_cells`, `From<PopupItem>`, `PopupItem::with_cells`), opened
+   with `PopupMenuState::open_rows` and read with `rows`; `open` and
+   `items` are unchanged. A `PopupCell { text, align: TextAlign, width:
+   PopupCellWidth (Auto, Fixed(px), Flex), dim, scale }` is drawn in
+   column k, shared by the k-th cells of all rows: Fixed if any cell is,
+   else Flex if any is, else Auto; natural widths at each cell's size
+   (`scale` clamped to 0.25..=4.0), gaps of `column_gap`; extra room to
+   the Flex columns (else the last), too little taken from the Flex
+   columns in proportion, then from the last column back; cells cut with
+   … to their column (one line; nothing drawn in a column narrower than
+   "…"), centred vertically on the row, dim ones in `dim_text_color`. A
+   row with cells draws them instead of its label; a separator's cells
+   are ignored. `PopupMenuLayout::columns` gives each column's x and
+   width.
+2. **8, theme:** `PopupMenuTheme` gains `column_gap` 12 and
+   `dim_text_color` `None` = `muted_text_color`; `PopupMenuOptions` an
+   override and setter for each; `PopupMenuResolved` both.
+3. **10:** the crate is 0.10.6. `PopupRow`, `PopupCell` and
+   `PopupCellWidth` are `#[non_exhaustive]`; `PopupItem` is unchanged.
+4. **11:** `tests/popup_menu.rs` adds 15 router tests (35 in all), and
+   `src/popup_menu.rs` adds 7 unit tests of the cells as drawn and of the
+   column arithmetic, in every build.

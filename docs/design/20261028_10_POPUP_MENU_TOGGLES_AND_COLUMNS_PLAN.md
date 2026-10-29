@@ -1,7 +1,7 @@
 ---
 title: PopupMenu toggle items and columns
 date: 2026-10-28
-status: Draft
+status: In implementation
 covers: >
   Two additions to the `PopupMenu`, in one release because both change
   what a menu row is and how it is chosen or drawn. (1) Toggle items:
@@ -582,3 +582,14 @@ flankr's lead, of what flankr's bottom bar plan and plugin plan need from
 libcontrols: "plan those in appropriate repos with subagent, then impl".
 It is built after MarkdownView's 0.10.5 lands on `main`, as 0.10.6. The
 status stays `Draft` until the first implementing commit (Rule 1.5).
+
+## Amendment — 2026-10-28 23:50 EDT: implementation started; the document is now immutable
+
+Implementation starts with this amendment, in the worktree
+`.claude/worktrees/popup-cols` on the branch `wt-popup-cols` from
+`dd74f39` (0.10.5, with the Scrollbar and MarkdownView): `status` is
+`In implementation`, and the body above is frozen (AGENTS.md Rule 1.5).
+The scope is every step, 1-4, released as **0.10.6**. The open questions
+keep this plan's own choices: no `replace_rows` (1), plain labels drawn
+uncut (2), `PopupRow` rather than a field on `PopupItem` (3), and no
+exported column function (4). Departures are recorded in `CHANGES.md`.

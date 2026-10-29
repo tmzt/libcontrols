@@ -15,6 +15,8 @@
 mod bookmarks;
 mod state;
 
+pub(crate) use bookmarks::cut_to_fit;
+
 use std::cell::Cell;
 use std::fmt;
 use std::sync::Arc;

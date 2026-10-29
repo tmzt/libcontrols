@@ -1,6 +1,8 @@
 //! A popup menu of actions, opened and closed by calls on its shared state
 //! and shown as a layer of the router's modal stack
-//! (docs/design/20261028_06_POPUP_MENU_PLAN.md).
+//! (docs/design/20261028_06_POPUP_MENU_PLAN.md), with toggle items and rows
+//! of cells in shared columns
+//! (docs/design/20261028_10_POPUP_MENU_TOGGLES_AND_COLUMNS_PLAN.md).
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -13,8 +15,9 @@ use crate::modal::{
     DismissOn, LayerContext, LayerFilter, LayerShape, Modal, ModalError, ModalLayerFilter,
     ModalOptions, ModalState, ModalTransition,
 };
-use crate::rect::Rect;
+use crate::rect::{Rect, TextAlign};
 use crate::router::Router;
+use crate::scrollbar::cut_to_fit;
 use crate::symbol::Symbol;
 use crate::theme::ControlTheme;
 use crate::traits::{DrawContext, DrawControl};
@@ -29,15 +32,17 @@ pub enum PopupItemKind {
     Heading,
     /// A line between groups; takes no input.
     Separator,
+    /// Chosen like an action, but flips `checked` and keeps the menu open.
+    Toggle,
 }
 
 /// One row of a popup menu.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PopupItem {
-    /// What `PopupMenuEvent::Chosen` reports.
+    /// What `PopupMenuEvent::Chosen` (or `Toggled`) reports.
     pub id: Symbol,
     pub label: String,
-    /// A disabled action is drawn dim and takes no input.
+    /// A disabled action or toggle is drawn dim and takes no input.
     pub enabled: bool,
     /// `Some(true)` draws a check mark; `Some(_)` on any item reserves the
     /// check column for every item.
@@ -54,6 +59,15 @@ impl PopupItem {
             enabled: true,
             checked: None,
             kind: PopupItemKind::Action,
+        }
+    }
+
+    /// An enabled toggle, on or off.
+    pub fn toggle(id: impl Into<Symbol>, label: impl Into<String>, checked: bool) -> Self {
+        Self {
+            checked: Some(checked),
+            kind: PopupItemKind::Toggle,
+            ..Self::action(id, label)
         }
     }
 
@@ -87,13 +101,156 @@ impl PopupItem {
         self
     }
 
-    /// Whether it can be chosen: an enabled action.
+    /// This item with cells, as a row.
+    #[must_use]
+    pub fn with_cells(self, cells: Vec<PopupCell>) -> PopupRow {
+        PopupRow::new(self).with_cells(cells)
+    }
+
+    /// Whether it can be chosen: an enabled action or toggle.
     pub fn is_choosable(&self) -> bool {
-        self.enabled && self.kind == PopupItemKind::Action
+        self.enabled && matches!(self.kind, PopupItemKind::Action | PopupItemKind::Toggle)
+    }
+
+    /// Whether it is drawn at `disabled_alpha`: a disabled action or toggle.
+    fn is_dimmed(&self) -> bool {
+        !self.enabled && matches!(self.kind, PopupItemKind::Action | PopupItemKind::Toggle)
     }
 }
 
-/// How a menu's opening ended, queued by its state and drained with
+/// How wide a cell's column is.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
+pub enum PopupCellWidth {
+    /// As wide as the column's widest cell.
+    #[default]
+    Auto,
+    /// This many px.
+    Fixed(f32),
+    /// The room left over; shrinks first.
+    Flex,
+}
+
+/// One cell of a row, drawn in its column.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct PopupCell {
+    /// One line; anything from the first `\n` on is cut with "…".
+    pub text: String,
+    /// Where the text sits in its column (default `Left`).
+    pub align: TextAlign,
+    /// How the column is sized (default `Auto`).
+    pub width: PopupCellWidth,
+    /// Drawn in `dim_text_color`.
+    pub dim: bool,
+    /// Times the menu's font size (default 1.0), clamped to 0.25..=4.0.
+    pub scale: f32,
+}
+
+impl PopupCell {
+    /// Left-aligned, `Auto`, not dim, scale 1.0.
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            align: TextAlign::Left,
+            width: PopupCellWidth::Auto,
+            dim: false,
+            scale: 1.0,
+        }
+    }
+
+    /// The same cell with this alignment.
+    #[must_use]
+    pub fn align(mut self, align: TextAlign) -> Self {
+        self.align = align;
+        self
+    }
+
+    /// The same cell with this width.
+    #[must_use]
+    pub fn width(mut self, width: PopupCellWidth) -> Self {
+        self.width = width;
+        self
+    }
+
+    /// `width(PopupCellWidth::Fixed(w))`.
+    #[must_use]
+    pub fn fixed(self, w: f32) -> Self {
+        self.width(PopupCellWidth::Fixed(w))
+    }
+
+    /// `width(PopupCellWidth::Flex)`.
+    #[must_use]
+    pub fn flex(self) -> Self {
+        self.width(PopupCellWidth::Flex)
+    }
+
+    /// The same cell, dim or not.
+    #[must_use]
+    pub fn dim(mut self, dim: bool) -> Self {
+        self.dim = dim;
+        self
+    }
+
+    /// The same cell at this multiple of the menu's font size.
+    #[must_use]
+    pub fn scale(mut self, scale: f32) -> Self {
+        self.scale = scale;
+        self
+    }
+
+    /// The scale as used: clamped to 0.25..=4.0, 1.0 when not finite.
+    fn used_scale(&self) -> f32 {
+        if self.scale.is_finite() {
+            self.scale.clamp(0.25, 4.0)
+        } else {
+            1.0
+        }
+    }
+}
+
+/// A menu row: an item and, optionally, cells drawn instead of its label.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct PopupRow {
+    pub item: PopupItem,
+    /// Empty: the label is drawn, as for a plain item.
+    pub cells: Vec<PopupCell>,
+}
+
+impl PopupRow {
+    /// A row of `item` with no cells.
+    pub fn new(item: PopupItem) -> Self {
+        Self {
+            item,
+            cells: Vec::new(),
+        }
+    }
+
+    /// The same row with these cells.
+    #[must_use]
+    pub fn with_cells(mut self, cells: Vec<PopupCell>) -> Self {
+        self.cells = cells;
+        self
+    }
+
+    /// The cells it draws: none for a separator.
+    fn drawn_cells(&self) -> &[PopupCell] {
+        if self.item.kind == PopupItemKind::Separator {
+            &[]
+        } else {
+            &self.cells
+        }
+    }
+}
+
+impl From<PopupItem> for PopupRow {
+    fn from(item: PopupItem) -> Self {
+        Self::new(item)
+    }
+}
+
+/// What happened in a menu, queued by its state and drained with
 /// [`PopupMenuState::take_events`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -103,6 +260,8 @@ pub enum PopupMenuEvent {
     /// The menu closed without a choice: an outside tap, Escape, Back, or
     /// its modal entry closed by anything but [`PopupMenuState::close`].
     Dismissed,
+    /// A toggle was chosen; the menu stays open. `checked` is its new state.
+    Toggled { id: Symbol, checked: bool },
 }
 
 /// Where an open menu and its items are.
@@ -115,13 +274,15 @@ pub struct PopupMenuLayout {
     pub items: Vec<Rect>,
     /// Whether it opened above its anchor.
     pub above: bool,
+    /// Each column's screen x and width; empty when no row has cells.
+    pub columns: Vec<[f32; 2]>,
 }
 
 #[derive(Debug, Default)]
 struct Inner {
     open: bool,
     anchor: Rect,
-    items: Vec<PopupItem>,
+    rows: Vec<PopupRow>,
     highlight: Option<usize>,
     pressed: Option<usize>,
     events: Vec<PopupMenuEvent>,
@@ -131,12 +292,12 @@ struct Inner {
 
 impl Inner {
     fn choosable(&self, index: usize) -> bool {
-        self.items.get(index).is_some_and(PopupItem::is_choosable)
+        self.rows.get(index).is_some_and(|r| r.item.is_choosable())
     }
 
     /// The next choosable item after `from` going `forward`, wrapping.
     fn step(&self, forward: bool) -> Option<usize> {
-        let n = self.items.len();
+        let n = self.rows.len();
         if n == 0 {
             return None;
         }
@@ -184,11 +345,16 @@ impl PopupMenuState {
     /// Open the menu at `anchor` with `items`, or, while open, replace them.
     /// Shown once the menu is attached to a router's modal stack.
     pub fn open(&self, anchor: Rect, items: Vec<PopupItem>) {
+        self.open_rows(anchor, items.into_iter().map(PopupRow::from).collect());
+    }
+
+    /// As [`open`](Self::open), with rows.
+    pub fn open_rows(&self, anchor: Rect, rows: Vec<PopupRow>) {
         let binding = {
             let mut inner = self.lock();
             inner.open = true;
             inner.anchor = anchor;
-            inner.items = items;
+            inner.rows = rows;
             inner.highlight = None;
             inner.pressed = None;
             inner.layout = None;
@@ -249,9 +415,14 @@ impl PopupMenuState {
         self.lock().anchor
     }
 
-    /// The items it was last opened with.
+    /// The items it was last opened with, toggles as flipped since.
     pub fn items(&self) -> Vec<PopupItem> {
-        self.lock().items.clone()
+        self.lock().rows.iter().map(|r| r.item.clone()).collect()
+    }
+
+    /// The rows it was last opened with, toggles as flipped since.
+    pub fn rows(&self) -> Vec<PopupRow> {
+        self.lock().rows.clone()
     }
 
     /// The highlighted item's index.
@@ -284,15 +455,25 @@ impl PopupMenuState {
         inner.highlight = inner.step(!last);
     }
 
-    /// Choose item `index`: queue `Chosen`, close. False if it is not an
-    /// enabled action or the menu is closed.
-    fn choose(&self, index: usize) -> bool {
+    /// Choose item `index`: an action queues `Chosen` and closes; a toggle
+    /// flips its `checked`, queues `Toggled` and stays open with its
+    /// highlight. False if it is not an enabled action or toggle or the menu
+    /// is closed.
+    fn activate(&self, index: usize) -> bool {
         let binding = {
             let mut inner = self.lock();
             if !inner.open || !inner.choosable(index) {
                 return false;
             }
-            let id = inner.items[index].id;
+            let item = &mut inner.rows[index].item;
+            let id = item.id;
+            if item.kind == PopupItemKind::Toggle {
+                let checked = !item.checked.unwrap_or(false);
+                item.checked = Some(checked);
+                inner.pressed = None;
+                inner.events.push(PopupMenuEvent::Toggled { id, checked });
+                return true;
+            }
             inner.open = false;
             inner.highlight = None;
             inner.pressed = None;
@@ -354,6 +535,10 @@ pub struct PopupMenuTheme {
     pub offset: f32,
     /// The least distance from the menu to the viewport's edges.
     pub margin: f32,
+    /// Between a row's columns of cells.
+    pub column_gap: f32,
+    /// A dim cell's colour. `None`: the theme's `muted_text_color`.
+    pub dim_text_color: Option<[f32; 4]>,
 }
 
 impl Default for PopupMenuTheme {
@@ -384,6 +569,8 @@ impl Default for PopupMenuTheme {
             shadow_offset: 3.0,
             offset: 4.0,
             margin: 8.0,
+            column_gap: 12.0,
+            dim_text_color: None,
         }
     }
 }
@@ -418,6 +605,8 @@ pub struct PopupMenuOptions {
     pub shadow_offset: Option<f32>,
     pub offset: Option<f32>,
     pub margin: Option<f32>,
+    pub column_gap: Option<f32>,
+    pub dim_text_color: Option<[f32; 4]>,
     /// Which user actions dismiss it (default: outside tap, Escape, Back).
     pub dismiss: DismissOn,
 }
@@ -464,6 +653,8 @@ impl PopupMenuOptions {
     setter!(shadow_offset: f32);
     setter!(offset: f32);
     setter!(margin: f32);
+    setter!(column_gap: f32);
+    setter!(dim_text_color: [f32; 4]);
 
     /// Which user actions dismiss it.
     #[must_use]
@@ -502,6 +693,8 @@ impl PopupMenuOptions {
             shadow_offset: self.shadow_offset.unwrap_or(theme.shadow_offset),
             offset: self.offset.unwrap_or(theme.offset),
             margin: self.margin.unwrap_or(theme.margin),
+            column_gap: self.column_gap.unwrap_or(theme.column_gap),
+            dim_text_color: self.dim_text_color.or(theme.dim_text_color),
         }
     }
 }
@@ -537,6 +730,9 @@ pub struct PopupMenuResolved {
     pub shadow_offset: f32,
     pub offset: f32,
     pub margin: f32,
+    pub column_gap: f32,
+    /// `None`: the theme's `muted_text_color`, read at draw.
+    pub dim_text_color: Option<[f32; 4]>,
 }
 
 /// A popup menu of actions. The app keeps one, attaches it to its router's
@@ -573,6 +769,105 @@ fn draw_check(list: &mut DrawList, c: [f32; 2], s: f32, t: f32, col: [f32; 4]) {
     list.push_line(knee, at(0.38, -0.30), t, col);
 }
 
+/// Whether any row reserves the check column: one with a check state, or a
+/// toggle (whose `None` is off, so a flip cannot change the width).
+fn reserves_check(rows: &[PopupRow]) -> bool {
+    rows.iter()
+        .any(|r| r.item.checked.is_some() || r.item.kind == PopupItemKind::Toggle)
+}
+
+/// The shared columns' kinds and natural widths (plan decisions 8 and 9):
+/// column `k` is the `k`th cell of every row with cells.
+fn natural_columns(
+    rows: &[PopupRow],
+    ctx: &DrawContext,
+    font_size: f32,
+) -> Vec<(PopupCellWidth, f32)> {
+    let n = rows
+        .iter()
+        .map(|r| r.drawn_cells().len())
+        .max()
+        .unwrap_or(0);
+    (0..n)
+        .map(|k| {
+            let cells = rows.iter().filter_map(|r| r.drawn_cells().get(k));
+            let mut fixed: Option<f32> = None;
+            let mut flex = false;
+            let mut widest = 0.0_f32;
+            for cell in cells {
+                match cell.width {
+                    PopupCellWidth::Fixed(w) => fixed = Some(fixed.map_or(w, |f| f.max(w))),
+                    PopupCellWidth::Flex => flex = true,
+                    PopupCellWidth::Auto => {}
+                }
+                widest = widest.max(ctx.text_advance(&cell.text, font_size * cell.used_scale()));
+            }
+            match fixed {
+                Some(w) => (PopupCellWidth::Fixed(w), w.max(0.0)),
+                None if flex => (PopupCellWidth::Flex, widest),
+                None => (PopupCellWidth::Auto, widest),
+            }
+        })
+        .collect()
+}
+
+/// The columns' widths in `room` px: extra room to the `Flex` columns
+/// equally (else the last); too little taken from the `Flex` columns in
+/// proportion to their natural widths, then from the last column back.
+fn column_widths(natural: &[(PopupCellWidth, f32)], gap: f32, room: f32) -> Vec<f32> {
+    let mut w: Vec<f32> = natural.iter().map(|&(_, n)| n).collect();
+    if w.is_empty() {
+        return w;
+    }
+    let content = w.iter().sum::<f32>() + gap * (w.len() - 1) as f32;
+    let flex: Vec<usize> = natural
+        .iter()
+        .enumerate()
+        .filter(|(_, (kind, _))| *kind == PopupCellWidth::Flex)
+        .map(|(k, _)| k)
+        .collect();
+    if content <= room {
+        let extra = room - content;
+        if flex.is_empty() {
+            *w.last_mut().unwrap() += extra;
+        } else {
+            let share = extra / flex.len() as f32;
+            for &k in &flex {
+                w[k] += share;
+            }
+        }
+        return w;
+    }
+    let mut excess = content - room;
+    let flex_total: f32 = flex.iter().map(|&k| w[k]).sum();
+    if flex_total > 0.0 {
+        let take = excess.min(flex_total);
+        for &k in &flex {
+            w[k] = (w[k] - take * w[k] / flex_total).max(0.0);
+        }
+        excess -= take;
+    }
+    for k in (0..w.len()).rev() {
+        if excess <= 0.0 {
+            break;
+        }
+        let take = excess.min(w[k]);
+        w[k] -= take;
+        excess -= take;
+    }
+    w
+}
+
+/// One cell as drawn: its row, cut text, pen, size and colour.
+#[derive(Clone, Debug, PartialEq)]
+struct CellRun {
+    row: usize,
+    text: String,
+    pen: [f32; 2],
+    size: f32,
+    color: [f32; 4],
+}
+
 impl PopupMenu {
     /// A closed menu that stays inside `viewport`.
     pub fn new(viewport: Rect) -> Self {
@@ -607,26 +902,35 @@ impl PopupMenu {
     pub fn layout(&self, ctx: &DrawContext) -> PopupMenuLayout {
         let r = self.resolved(&ctx.theme);
         let font_size = ctx.font_size(r.font_size);
-        let (anchor, items) = {
+        let (anchor, rows) = {
             let inner = self.state.lock();
-            (inner.anchor, inner.items.clone())
+            (inner.anchor, inner.rows.clone())
         };
         let vp = self.rect;
-        let checks = items.iter().any(|i| i.checked.is_some());
-        let label_w = items
+        let label_w = rows
             .iter()
-            .filter(|i| i.kind != PopupItemKind::Separator)
-            .map(|i| ctx.text_advance(&i.label, font_size))
+            .filter(|r| r.item.kind != PopupItemKind::Separator && r.cells.is_empty())
+            .map(|r| ctx.text_advance(&r.item.label, font_size))
             .fold(0.0_f32, f32::max);
-        let check_w = if checks { r.check_width } else { 0.0 };
-        let content_w = label_w + 2.0 * r.item_padding + check_w + 2.0 * r.padding;
+        let natural = natural_columns(&rows, ctx, font_size);
+        let cells_w = if natural.is_empty() {
+            0.0
+        } else {
+            natural.iter().map(|&(_, n)| n).sum::<f32>() + r.column_gap * (natural.len() - 1) as f32
+        };
+        let check_w = if reserves_check(&rows) {
+            r.check_width
+        } else {
+            0.0
+        };
+        let content_w = label_w.max(cells_w) + 2.0 * r.item_padding + check_w + 2.0 * r.padding;
         let w = content_w
             .max(r.min_width)
             .min(r.max_width)
             .min((vp.w - 2.0 * r.margin).max(0.0));
-        let heights: Vec<f32> = items
+        let heights: Vec<f32> = rows
             .iter()
-            .map(|i| match i.kind {
+            .map(|row| match row.item.kind {
                 PopupItemKind::Separator => r.separator_height,
                 _ => r.item_height,
             })
@@ -663,11 +967,76 @@ impl PopupMenu {
                 rect
             })
             .collect();
+        let room = (inner_w - 2.0 * r.item_padding - check_w).max(0.0);
+        let x0 = x + r.padding + r.item_padding + check_w;
+        let mut cx = x0;
+        let columns = column_widths(&natural, r.column_gap, room)
+            .into_iter()
+            .map(|cw| {
+                let col = [cx, cw];
+                cx += cw + r.column_gap;
+                col
+            })
+            .collect();
         PopupMenuLayout {
             frame,
             items: rects,
             above,
+            columns,
         }
+    }
+
+    /// Where each row's cells are drawn, cut to their columns, and in what
+    /// colour (plan decision 10).
+    fn cell_runs(
+        &self,
+        ctx: &DrawContext,
+        layout: &PopupMenuLayout,
+        rows: &[PopupRow],
+    ) -> Vec<CellRun> {
+        let r = self.resolved(&ctx.theme);
+        let font_size = ctx.font_size(r.font_size);
+        let text_col = ctx.text_color(r.text_color);
+        let heading_col = r.heading_color.unwrap_or(ctx.theme.muted_text_color);
+        let dim_col = r.dim_text_color.unwrap_or(ctx.theme.muted_text_color);
+        let mut runs = Vec::new();
+        for (i, (row, rect)) in rows.iter().zip(&layout.items).enumerate() {
+            let alpha = if row.item.is_dimmed() {
+                r.disabled_alpha
+            } else {
+                1.0
+            };
+            let base = if row.item.kind == PopupItemKind::Heading {
+                heading_col
+            } else {
+                text_col
+            };
+            for (cell, &[x, w]) in row.drawn_cells().iter().zip(&layout.columns) {
+                let size = font_size * cell.used_scale();
+                let measure = |t: &str| ctx.text_advance(t, size);
+                let text = cut_to_fit(&cell.text, w, measure);
+                let a = measure(&text);
+                if a > w {
+                    // Narrower than "…" itself: nothing is drawn.
+                    continue;
+                }
+                let px = match cell.align {
+                    TextAlign::Left => x,
+                    TextAlign::Center => x + (w - a) * 0.5,
+                    TextAlign::Right => x + w - a,
+                };
+                let py = rect.y + (rect.h - size * LINE_BOX_RATIO) * 0.5;
+                let col = if cell.dim { dim_col } else { base };
+                runs.push(CellRun {
+                    row: i,
+                    text,
+                    pen: [px, py],
+                    size,
+                    color: with_alpha(col, alpha),
+                });
+            }
+        }
+        runs
     }
 
     /// The last drawn layout, or one from the default theme before a draw.
@@ -693,7 +1062,7 @@ impl PopupMenu {
 
     fn chosen(&self, index: usize) -> Option<ControlAction> {
         self.state
-            .choose(index)
+            .activate(index)
             .then_some(ControlAction::Activated {
                 part: ControlPart::Custom(index as u32),
             })
@@ -705,9 +1074,9 @@ impl DrawControl for PopupMenu {
         let r = self.resolved(&ctx.theme);
         let layout = self.layout(ctx);
         self.state.set_layout(layout.clone());
-        let (items, highlight) = {
+        let (rows, highlight) = {
             let inner = self.state.lock();
-            (inner.items.clone(), inner.highlight)
+            (inner.rows.clone(), inner.highlight)
         };
         let frame = layout.frame;
         let font_size = ctx.font_size(r.font_size);
@@ -715,8 +1084,12 @@ impl DrawControl for PopupMenu {
         let text_col = ctx.text_color(r.text_color);
         let heading_col = r.heading_color.unwrap_or(ctx.theme.muted_text_color);
         let check_col = r.check_color.unwrap_or(ctx.theme.accent_color);
-        let checks = items.iter().any(|i| i.checked.is_some());
-        let check_w = if checks { r.check_width } else { 0.0 };
+        let check_w = if reserves_check(&rows) {
+            r.check_width
+        } else {
+            0.0
+        };
+        let cell_runs = self.cell_runs(ctx, &layout, &rows);
 
         if r.shadow[3] > 0.0 {
             list.push(SdfInstance {
@@ -747,7 +1120,8 @@ impl DrawControl for PopupMenu {
             });
         }
 
-        for (i, (item, rect)) in items.iter().zip(&layout.items).enumerate() {
+        for (i, (row, rect)) in rows.iter().zip(&layout.items).enumerate() {
+            let item = &row.item;
             if item.kind == PopupItemKind::Separator {
                 let y = rect.y + rect.h * 0.5;
                 list.push_line(
@@ -758,7 +1132,7 @@ impl DrawControl for PopupMenu {
                 );
                 continue;
             }
-            let alpha = if item.kind == PopupItemKind::Action && !item.enabled {
+            let alpha = if item.is_dimmed() {
                 r.disabled_alpha
             } else {
                 1.0
@@ -784,6 +1158,12 @@ impl DrawControl for PopupMenu {
                     r.check_thickness,
                     with_alpha(check_col, alpha),
                 );
+            }
+            if !row.cells.is_empty() {
+                for run in cell_runs.iter().filter(|c| c.row == i) {
+                    ctx.draw_text(list, &run.text, run.pen, run.size, run.color);
+                }
+                continue;
             }
             let col = if item.kind == PopupItemKind::Heading {
                 heading_col
@@ -916,5 +1296,212 @@ impl Router {
         menu.state.bind(Arc::clone(stack.state()), id);
         stack.attach(id, Box::new(move || Box::new(menu.clone())));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Drawing cells (plan 20261028_10, step 3): no shaper draws no glyphs,
+    //! so the runs `draw` hands to `DrawContext::draw_text` are checked here.
+
+    use super::*;
+
+    const VIEWPORT: Rect = Rect::new(0.0, 0.0, 400.0, 600.0);
+    const ANCHOR: Rect = Rect::new(350.0, 8.0, 42.0, 42.0);
+    const LONG: &str = "A much longer plan title that will not fit";
+
+    fn approx(a: f32, b: f32) -> bool {
+        (a - b).abs() < 0.01
+    }
+
+    fn plan_row(nn: &str, date: &str, title: &str, status: &str) -> PopupRow {
+        PopupItem::action("plan", format!("{nn} {date} {title} {status}")).with_cells(vec![
+            PopupCell::new(nn).align(TextAlign::Right).scale(0.8),
+            PopupCell::new(date).align(TextAlign::Right).scale(0.8),
+            PopupCell::new(title).flex(),
+            PopupCell::new(status).dim(true).scale(0.8),
+        ])
+    }
+
+    fn runs_of(menu: &PopupMenu, ctx: &DrawContext) -> (PopupMenuLayout, Vec<CellRun>) {
+        let layout = menu.layout(ctx);
+        let rows = menu.state.rows();
+        let runs = menu.cell_runs(ctx, &layout, &rows);
+        (layout, runs)
+    }
+
+    fn step2_menu(options: PopupMenuOptions) -> PopupMenu {
+        let menu = PopupMenu::new(VIEWPORT).with_options(options);
+        menu.state.open_rows(
+            ANCHOR,
+            vec![
+                plan_row("7", "10/28", "Short", "Draft"),
+                plan_row("10", "10/27", LONG, "InImpl"),
+            ],
+        );
+        menu
+    }
+
+    #[test]
+    fn one_run_per_cell_cut_to_its_column() {
+        let ctx = DrawContext::default();
+        let (layout, runs) = runs_of(&step2_menu(PopupMenuOptions::default()), &ctx);
+        assert_eq!(runs.len(), 8);
+        assert!(runs.iter().all(|r| r.text != "7 10/28 Short Draft"));
+        let title = &runs[6];
+        assert!(title.text.ends_with('\u{2026}'), "{}", title.text);
+        let w = layout.columns[2][1];
+        assert!(approx(w, 163.92));
+        assert!(ctx.text_advance(&title.text, 14.0) <= w);
+        assert_eq!(runs[2].text, "Short");
+    }
+
+    #[test]
+    fn cells_are_aligned_in_their_columns_and_centred_on_the_row() {
+        let ctx = DrawContext::default();
+        let (layout, runs) = runs_of(&step2_menu(PopupMenuOptions::default()), &ctx);
+        let row = layout.items[0];
+        // "7", right-aligned in 12.32.
+        assert!(approx(runs[0].pen[0], 92.0 + 12.32 - 6.16));
+        assert!(approx(runs[0].size, 11.2));
+        // "Short", left.
+        assert!(approx(runs[2].pen[0], 159.12));
+        assert!(approx(
+            runs[0].pen[1],
+            row.y + (40.0 - 11.2 * LINE_BOX_RATIO) / 2.0
+        ));
+        assert!(approx(
+            runs[2].pen[1],
+            row.y + (40.0 - 14.0 * LINE_BOX_RATIO) / 2.0
+        ));
+
+        let menu = PopupMenu::new(VIEWPORT).with_options(PopupMenuOptions::new().min_width(200.0));
+        menu.state.open_rows(
+            ANCHOR,
+            vec![
+                PopupItem::action("c", "ab")
+                    .with_cells(vec![PopupCell::new("ab").align(TextAlign::Center).flex()]),
+            ],
+        );
+        let (layout, runs) = runs_of(&menu, &ctx);
+        let [x, w] = layout.columns[0];
+        assert!(approx(runs[0].pen[0], x + (w - 15.4) / 2.0));
+    }
+
+    #[test]
+    fn dim_cells_take_the_dim_colour_and_disabled_rows_the_disabled_alpha() {
+        let ctx = DrawContext::default();
+        let theme = ControlTheme::default();
+        let (_, runs) = runs_of(&step2_menu(PopupMenuOptions::default()), &ctx);
+        assert_eq!(runs[3].color, theme.muted_text_color);
+        assert_eq!(runs[2].color, theme.text_color);
+
+        let red = [1.0, 0.0, 0.0, 1.0];
+        let (_, runs) = runs_of(
+            &step2_menu(PopupMenuOptions::new().dim_text_color(red)),
+            &ctx,
+        );
+        assert_eq!(runs[3].color, red);
+
+        let menu = PopupMenu::new(VIEWPORT);
+        menu.state.open_rows(
+            ANCHOR,
+            vec![
+                PopupItem::action("x", "x y")
+                    .with_enabled(false)
+                    .with_cells(vec![PopupCell::new("x"), PopupCell::new("y").dim(true)]),
+            ],
+        );
+        let (_, runs) = runs_of(&menu, &ctx);
+        assert!(approx(runs[0].color[3], theme.text_color[3] * 0.4));
+        assert!(approx(runs[1].color[3], theme.muted_text_color[3] * 0.4));
+    }
+
+    #[test]
+    fn heading_cells_take_the_heading_colour_and_separator_cells_are_not_drawn() {
+        let ctx = DrawContext::default();
+        let theme = ControlTheme::default();
+        let mut heading_theme = PopupMenuTheme::default();
+        let gold = [0.9, 0.8, 0.1, 1.0];
+        heading_theme.heading_color = Some(gold);
+        let ctx = ctx.with_theme(ControlTheme {
+            popup_menu: heading_theme,
+            ..theme
+        });
+        let menu = PopupMenu::new(VIEWPORT);
+        menu.state.open_rows(
+            ANCHOR,
+            vec![
+                PopupItem::heading("NN Title")
+                    .with_cells(vec![PopupCell::new("NN"), PopupCell::new("Title")]),
+                PopupItem::separator().with_cells(vec![PopupCell::new("gone")]),
+            ],
+        );
+        let (_, runs) = runs_of(&menu, &ctx);
+        assert_eq!(runs.len(), 2);
+        assert!(runs.iter().all(|r| r.row == 0 && r.color == gold));
+    }
+
+    #[test]
+    fn a_column_narrower_than_the_ellipsis_draws_nothing() {
+        let natural = [
+            (PopupCellWidth::Auto, 50.0),
+            (PopupCellWidth::Fixed(40.0), 40.0),
+        ];
+        // 12 px of room: the last column goes first, then the one before.
+        assert_eq!(column_widths(&natural, 10.0, 12.0), vec![2.0, 0.0]);
+
+        let ctx = DrawContext::default();
+        let menu = PopupMenu::new(VIEWPORT).with_options(PopupMenuOptions::new().max_width(60.0));
+        menu.state.open_rows(
+            ANCHOR,
+            vec![
+                PopupItem::action("x", "x")
+                    .with_cells(vec![PopupCell::new("left"), PopupCell::new("right side")]),
+            ],
+        );
+        let (layout, runs) = runs_of(&menu, &ctx);
+        // 60 wide: 20 px of room; "left" (30.8) shrinks to 8 and "right
+        // side" to 0, narrower than "…" (7.7): only the first draws.
+        assert!(approx(layout.columns[0][1], 8.0));
+        assert!(approx(layout.columns[1][1], 0.0));
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].text, "\u{2026}");
+    }
+
+    #[test]
+    fn flex_columns_shrink_in_proportion_then_the_rest_from_the_last() {
+        let natural = [
+            (PopupCellWidth::Flex, 100.0),
+            (PopupCellWidth::Flex, 50.0),
+            (PopupCellWidth::Auto, 20.0),
+        ];
+        let w = column_widths(&natural, 0.0, 140.0);
+        assert!(approx(w[0], 80.0) && approx(w[1], 40.0) && approx(w[2], 20.0));
+        let w = column_widths(&natural, 0.0, 10.0);
+        assert_eq!(w, vec![0.0, 0.0, 10.0]);
+        // Extra shared equally by the Flex columns.
+        let w = column_widths(&natural, 0.0, 190.0);
+        assert!(approx(w[0], 110.0) && approx(w[1], 60.0) && approx(w[2], 20.0));
+    }
+
+    #[test]
+    fn a_cell_is_one_line_and_its_scale_is_clamped() {
+        let ctx = DrawContext::default();
+        let menu = PopupMenu::new(VIEWPORT);
+        menu.state.open_rows(
+            ANCHOR,
+            vec![
+                PopupItem::action("x", "x")
+                    .with_cells(vec![PopupCell::new("one\ntwo").scale(100.0)]),
+            ],
+        );
+        let (_, runs) = runs_of(&menu, &ctx);
+        assert_eq!(runs[0].size, 14.0 * 4.0);
+        assert!(runs[0].text.starts_with("one") || runs[0].text.starts_with('o'));
+        assert!(runs[0].text.ends_with('\u{2026}'));
+        assert!(!runs[0].text.contains('\n'));
+        assert_eq!(PopupCell::new("a").scale(f32::NAN).used_scale(), 1.0);
+        assert_eq!(PopupCell::new("a").scale(0.0).used_scale(), 0.25);
     }
 }

@@ -393,3 +393,23 @@ A build without the features is 0.10.4's apart from the theme types.
   `centered`, `with_theme`), `MarkdownResolved` (`font_size_in`,
   `text_color_in`, `link_color_in`, `dim_color_in`, `code_color_in`);
   `ControlTheme::markdown`.
+
+## 0.10.6 — 2026-10-28 (tag `v0.10.6`)
+
+PopupMenu toggle items and columns
+(docs/design/20261028_10_POPUP_MENU_TOGGLES_AND_COLUMNS_PLAN.md).
+Additive: variants on `#[non_exhaustive]` enums, new types and methods,
+fields appended to `#[non_exhaustive]` structs; `PopupItem` is
+unchanged, and menus without toggles or cells behave as before.
+
+- Added: `PopupItemKind::Toggle`, `PopupItem::toggle`,
+  `PopupMenuEvent::Toggled { id, checked }`; `PopupItem::is_choosable`
+  is true for an enabled toggle.
+- Added: `PopupRow` (`new`, `with_cells`, `From<PopupItem>`),
+  `PopupItem::with_cells`, `PopupCell` (`new`, `align`, `width`,
+  `fixed`, `flex`, `dim`, `scale`), `PopupCellWidth` (`Auto`, the
+  default, `Fixed`, `Flex`).
+- Added: `PopupMenuState::open_rows`, `PopupMenuState::rows`.
+- Added: `PopupMenuLayout::columns`.
+- Added: `PopupMenuTheme`, `PopupMenuOptions` (with setters) and
+  `PopupMenuResolved`: `column_gap`, `dim_text_color`.
