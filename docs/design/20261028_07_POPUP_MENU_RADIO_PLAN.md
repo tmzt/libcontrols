@@ -367,3 +367,16 @@ built after 0.10.6 lands; its theme fields are appended after 0.10.6's,
 and its marks keep drawing from `checked`, so toggle items take radio
 marks in a `Radio` menu. The status stays `Draft` until the first
 implementing commit (Rule 1.5).
+
+## Amendment — 2026-10-28 23:49 EDT: toggle items keep the check mark
+
+The owner (2026-10-28): "the toggles should be checkmark glyph instead
+(checked/unchecked)". This replaces the previous amendment's "so toggle
+items take radio marks in a `Radio` menu": a toggle item
+(`PopupItemKind::Toggle`, plan 20261028_10) always draws the check mark
+of today's check column, whatever the menu's `PopupMarkStyle`: the check
+when `checked: Some(true)`, the empty column when `Some(false)`. The
+radio marks of `PopupMarkStyle::Radio` apply only to `Action` items with a
+check state. So flankr's volume menu (toggles) shows checks, and its
+subagent dropdown (actions, `Radio`) shows ⦿ and ⊙. Tests add: a toggle in
+a `Radio` menu draws the check, not a ring.
