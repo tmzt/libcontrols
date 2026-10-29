@@ -19,6 +19,7 @@ use crate::filter::{FilterContext, FilterStack, Filtered};
 use crate::flags::{NodeFlags, NodeState};
 use crate::rect::Rect;
 use crate::scroll::{ScrollAxis, ScrollPane};
+use crate::scrollbar::{Scrollbar, ScrollbarTheme, draw_bar};
 use crate::symbol::Symbol;
 use crate::theme::ScrollTheme;
 use crate::traits::{DrawContext, DrawControl};
@@ -150,8 +151,12 @@ pub struct Router {
     clocked: Cell<bool>,
     /// The scroll values of the theme last drawn with.
     scroll_theme: Cell<ScrollTheme>,
+    /// The scrollbar values of the theme last drawn with.
+    scrollbar_theme: Cell<ScrollbarTheme>,
     /// The pane a press moved to, and by which button.
     pane_drag: Cell<Option<(usize, MouseButton)>>,
+    /// The pane whose scrollbar thumb a press holds, and by which button.
+    bar_drag: Cell<Option<(usize, MouseButton)>>,
     /// The `Click` to drop: it ends a press a pane took.
     drop_click: Cell<Option<MouseButton>>,
 }
@@ -592,6 +597,7 @@ impl Router {
     pub(crate) fn render_at(&self, list: &mut DrawList, ctx: &DrawContext, origin: [f32; 2]) {
         let shift = [-origin[0], -origin[1]];
         self.scroll_theme.set(ctx.theme.scroll);
+        self.scrollbar_theme.set(ctx.theme.scrollbar);
         self.update_panes();
         for &r in &self.roots {
             self.draw_subtree(list, ctx, r, false, None, shift, false);
@@ -609,6 +615,7 @@ impl DrawControl for Router {
     /// keeps the theme's scroll values for input.
     fn draw(&self, list: &mut DrawList, ctx: &DrawContext) {
         self.scroll_theme.set(ctx.theme.scroll);
+        self.scrollbar_theme.set(ctx.theme.scrollbar);
         self.update_panes();
         for &r in &self.roots {
             self.draw_subtree(list, ctx, r, false, None, [0.0, 0.0], false);
@@ -705,13 +712,18 @@ impl Router {
         list.push_translate_end();
         if !overlay {
             list.push_clip_end();
+            let start = list.instances.len();
             if pane.shows_indicator() {
-                let start = list.instances.len();
                 pane.draw_indicator(list, &ctx.theme.scroll, self.time.get());
-                if disabled {
-                    for instance in &mut list.instances[start..] {
-                        instance.color[3] *= 0.5;
-                    }
+            }
+            if let Some(bar) = pane.scrollbar() {
+                // The bookmarks are clipped to the track, in screen pixels.
+                let clip = Rect::new(vp.x - shift[0], vp.y - shift[1], vp.w, vp.h);
+                draw_bar(list, ctx, bar, Some(clip));
+            }
+            if disabled {
+                for instance in &mut list.instances[start..] {
+                    instance.color[3] *= 0.5;
                 }
             }
         }
@@ -1093,13 +1105,31 @@ impl Router {
     /// Let go of the press grab without telling anything (a layer opened
     /// over this router).
     pub(crate) fn cancel_grab(&self) {
+        self.end_bar_grabs();
         self.set_grab(None);
+    }
+
+    /// A held scrollbar thumb, on a pane or a `Scrollbar` node, is let go
+    /// of as the press goes away.
+    fn end_bar_grabs(&self) {
+        if let Some((pane, _)) = self.bar_drag.take()
+            && let Some(bar) = self.scroll_at(pane).and_then(|p| p.scrollbar())
+        {
+            bar.cancel();
+        }
+        if let Some(grab) = self.grab.get() {
+            let any: &dyn Any = self.node(grab.index).control.as_ref();
+            if let Some(bar) = any.downcast_ref::<Scrollbar>() {
+                bar.state().cancel();
+            }
+        }
     }
 
     /// A layer was pushed: the app's nodes beneath stop being hovered or
     /// grabbed.
     pub(crate) fn layer_opened(&self) {
         self.update_hover(&[]);
+        self.end_bar_grabs();
         self.set_grab(None);
     }
 
@@ -1622,6 +1652,18 @@ impl Router {
         let now = self.time.get() + f64::from(dt);
         self.time.set(now);
         let theme = self.scroll_theme.get();
+        let bar_theme = self.scrollbar_theme.get();
+        // Scrollbars' clocks move on, each fed first so a pane that stopped
+        // is not counted as scrolling for this step.
+        for node in self.nodes.iter().flatten() {
+            let any: &dyn Any = node.control.as_ref();
+            if let Some(pane) = any.downcast_ref::<ScrollPane>()
+                && let Some(bar) = pane.scrollbar()
+            {
+                pane.feed_scrollbar(&bar_theme, &theme, now);
+                bar.with(|b| b.tick(dt));
+            }
+        }
         self.update_panes();
         let mut busy = false;
         for node in self.nodes.iter().flatten() {
@@ -1635,6 +1677,12 @@ impl Router {
                         || s.is_coasting(&theme)
                         || (shows && s.indicator_alpha(now, &theme) > 0.0)
                 });
+                if let Some(bar) = pane.scrollbar() {
+                    pane.feed_scrollbar(&bar_theme, &theme, now);
+                    busy |= bar.with(|b| b.busy());
+                }
+            } else if let Some(bar) = any.downcast_ref::<Scrollbar>() {
+                busy |= bar.state().advance(dt);
             } else if let Some(inner) = any.downcast_ref::<Router>() {
                 busy |= inner.advance(dt);
             }
@@ -1849,6 +1897,43 @@ impl Router {
             anchors.sort_by(|a, b| a.1.total_cmp(&b.1));
             s.anchors = anchors;
         });
+        pane.feed_scrollbar(
+            &self.scrollbar_theme.get(),
+            &self.scroll_theme.get(),
+            self.time.get(),
+        );
+    }
+
+    /// Apply the scrub the scrollbar of the pane at `index` asked for.
+    fn apply_scrub(&self, index: usize) {
+        let Some(p) = self.scroll_at(index) else {
+            return;
+        };
+        let Some(bar) = p.scrollbar() else {
+            return;
+        };
+        if let Some(to) = bar.with(|b| b.take_pending()) {
+            let now = self.time.get();
+            p.state().with(|s| s.scroll_to(to, now));
+        }
+    }
+
+    /// The innermost pane on `path` whose scrollbar band holds `pos`.
+    fn bar_at(&self, path: &[Hit], pos: [f32; 2]) -> Option<usize> {
+        path.iter().rev().map(|&(i, _)| i).find(|&i| {
+            let Some(p) = self.scroll_at(i) else {
+                return false;
+            };
+            let Some(bar) = p.scrollbar() else {
+                return false;
+            };
+            if !self.takes_input(i) {
+                return false;
+            }
+            self.update_pane(i, p);
+            let at = self.local(i, pos);
+            bar.with(|b| b.band()).is_some_and(|r| r.contains(at))
+        })
     }
 
     /// Scroll the panes above the node at `index` until it is in view.
@@ -1901,6 +1986,14 @@ impl Router {
             }
             self.pane_drag.set(None);
         }
+        if let Some((pane, _)) = self.bar_drag.get()
+            && self.grab.get().is_none_or(|g| g.index != pane)
+        {
+            if let Some(bar) = self.scroll_at(pane).and_then(|p| p.scrollbar()) {
+                bar.cancel();
+            }
+            self.bar_drag.set(None);
+        }
         match *event {
             MouseEvent::Click { button, .. } if self.drop_click.get() == Some(button) => {
                 self.drop_click.set(None);
@@ -1908,8 +2001,36 @@ impl Router {
             }
             MouseEvent::Down { pos, button } => {
                 self.drop_click.set(None);
-                // A touch that stops a fling or a spring is not a tap.
                 let path = self.hit_path(pos);
+                // A press in a pane's scrollbar band grabs its thumb before
+                // the children see it, and stops a fling.
+                if let Some(index) = self.bar_at(&path, pos) {
+                    let pane = self.scroll_at(index)?;
+                    pane.state().with(|s| {
+                        let o = s.offset();
+                        s.scroll_to(o, now);
+                    });
+                    let bar = pane.scrollbar()?;
+                    let at = self.local(index, pos);
+                    bar.press(at);
+                    self.apply_scrub(index);
+                    self.set_grab(Some(Grab {
+                        index,
+                        button,
+                        start_pos: pos,
+                        press_modifiers: self.modifiers.get(),
+                        part: ControlPart::Thumb,
+                        kept: true,
+                    }));
+                    self.bar_drag.set(Some((index, button)));
+                    return Some(EventResponse::handled(
+                        self.node(index).id,
+                        ControlPart::Thumb,
+                        None,
+                        self.focused(),
+                    ));
+                }
+                // A touch that stops a fling or a spring is not a tap.
                 let (index, pane) = path.iter().rev().find_map(|&(i, _)| {
                     self.scroll_at(i)
                         .filter(|p| {
@@ -1936,6 +2057,19 @@ impl Router {
                 button,
                 ..
             } => {
+                if let Some((index, b)) = self.bar_drag.get()
+                    && b == button
+                {
+                    let bar = self.scroll_at(index)?.scrollbar()?;
+                    bar.drag_to(self.local(index, current_pos));
+                    self.apply_scrub(index);
+                    return Some(EventResponse::handled(
+                        self.node(index).id,
+                        ControlPart::Thumb,
+                        None,
+                        self.focused(),
+                    ));
+                }
                 if let Some((index, b)) = self.pane_drag.get()
                     && b == button
                 {
@@ -1978,6 +2112,22 @@ impl Router {
                 Some(self.pane_handled(index))
             }
             MouseEvent::Up { button, .. } => {
+                if let Some((index, b)) = self.bar_drag.get()
+                    && b == button
+                {
+                    self.bar_drag.set(None);
+                    self.set_grab(None);
+                    self.drop_click.set(Some(button));
+                    if let Some(bar) = self.scroll_at(index).and_then(|p| p.scrollbar()) {
+                        bar.release();
+                    }
+                    return Some(EventResponse::handled(
+                        self.node(index).id,
+                        ControlPart::Thumb,
+                        None,
+                        self.focused(),
+                    ));
+                }
                 let (index, b) = self.pane_drag.get()?;
                 if b != button {
                     return None;

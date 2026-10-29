@@ -339,3 +339,30 @@ module and types, a `Router` method, and a field appended to `ControlTheme`
   `dismiss`, with `with_theme`), `PopupMenuResolved`.
 - Added: `Router::attach_popup_menu`.
 - Added: `ControlTheme::popup_menu: PopupMenuTheme`.
+
+## 0.10.4 — 2026-10-28 (tag `v0.10.4`)
+
+Scrollbar and bookmarks (docs/design/20261028_08_SCROLLBAR_PLAN.md, steps
+1-5). Additive: new modules and types, new methods, and a field appended
+to `ControlTheme` (additive by the owner's ruling: a caller builds a theme
+with `..ControlTheme::default()`); panes that do not opt in behave as
+before. Sections drawn by a pane wait for a later release.
+
+- Added: `scrollbar`: `Scrollbar` (`new`, `with_state`, `state`,
+  `set_track`, `track`, `resolved`, `thumb_rect`, `band_rect`,
+  `bookmark_layout`), `ScrollbarState` (`new`, `with_sections`,
+  `set_sections`, `set_metrics`, `set_scrolling`, `advance`,
+  `take_events`, `is_held`, `alpha`, `bookmarks_alpha`, `press`,
+  `drag_to`, `release`, `cancel`), `ScrollbarVisibility` (`None`,
+  `OnScroll`, the default, `Always`), `ScrollbarEvent` (`Grabbed`,
+  `Scrub`, `Released`), `BookmarkPill`.
+- Added: `ScrollbarTheme`, `ScrollbarOptions` (with setters, `visibility`,
+  `bookmarks`, `with_theme`), `ScrollbarResolved`;
+  `ControlTheme::scrollbar`.
+- Added: `sections`: `SectionId`, `Section` (`new`, `estimated`),
+  `BookmarkText` (`Text`, `Markdown`), `SectionedContent` (`new`,
+  `set_sections`, `push`, `insert`, `remove`, `set_height`, `len`,
+  `is_empty`, `sections`, `total_height`, `offset_of`, `section_at`,
+  `add_bookmark`, `remove_bookmark`, `clear_bookmarks`, `bookmarks`).
+- Added: `ScrollPane::with_scrollbar`, `ScrollPane::scrollbar`;
+  `ScrollState::content_length`.

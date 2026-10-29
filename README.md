@@ -19,6 +19,7 @@ UI controls drawn as MSDF primitives, owned by a persistent router.
 - **EditableLabel** — A label with a pencil that edits it in place: a field with a check and an optional X (clear)
 - **PopupMenu** — A menu of actions anchored to a rect (a ⋮), opened by a call and shown as a layer of the modal stack; an outside tap, Escape or Back closes it
 - **ScrollPane** — A viewport onto children laid out on a larger plane, scrolled by touch, wheel, trackpad and keys
+- **Scrollbar** — A thin proportional thumb with a band that grabs and scrubs, shown on scroll or always, with bookmarks drawn while it is held; on a pane or over the app's own scroller
 
 ## Labels and tooltips
 
@@ -191,6 +192,40 @@ router.render(&mut draw_list, &draw_context);
 - `Router::scroll_to`, `scroll_by`, `scroll_into_view`, `to_content` and
   `visible_bounds` move a pane and map points and bounds through it.
 
+## Scrollbar and sections
+
+`ScrollPane::with_scrollbar(ScrollbarOptions)` gives a vertical pane
+flankr's agent-view scrollbar in place of the indicator: a 4 px thumb, at
+least 24 long, whose 12 px band at the right edge takes a press even when
+the thumb is not drawn. A press on the thumb grabs it where it touched;
+elsewhere in the band the thumb jumps to centre under the finger. Dragging
+scrubs the pane, and letting go leaves it there with no fling. The
+children never see a press in the band. `ScrollbarVisibility` is `None`
+(no thumb, no band), `OnScroll` (the default: shown while scrolling and
+2 s after, then a 300 ms fade) or `Always`.
+
+```rust
+let pane = ScrollPane::new(viewport, ScrollAxis::Vertical)
+    .with_scrollbar(ScrollbarOptions::default());
+let index = SectionedContent::new();
+index.set_sections(chunks.iter().map(|c| Section::new(SectionId(c.id), c.height)).collect());
+index.add_bookmark(SectionId(3), BookmarkText::Text("Installation".into()));
+pane.scrollbar().unwrap().set_sections(Some(index.clone()));
+```
+
+While the thumb is held, and 2 s after, bookmarks are drawn over the
+content as translucent pills. Each sits at its section's share of the
+track, centred across it. The pill nearest the thumb is brighter, and
+crowded pills give way to the nearest one. A `SectionedContent` is an
+index of sections: each has a stable `SectionId` and a height, and
+bookmarks are added on a section's id (`add_bookmark` replaces,
+`remove_bookmark`). `BookmarkText::Markdown` is drawn as written for now.
+A standalone `Scrollbar` node over a scroller the app drives itself is fed
+with `ScrollbarState::set_metrics` and `set_scrolling`, and reports
+`ScrollbarEvent::Grabbed`, `Scrub` and `Released` (with the section and
+nearest bookmark) through `take_events`. Its numbers are
+`ControlTheme::scrollbar`, overridden per scrollbar by `ScrollbarOptions`.
+
 ## Building
 
 ```bash
@@ -223,5 +258,5 @@ MIT License. See LICENSE file for details.
 | [EditableLabel, a label edited in place](docs/design/20261028_05_EDITABLE_LABEL_PLAN.md) | 2026-10-28 | In implementation | A one-node `EditableLabel`: a label with a pencil that switches it to an `Edit` field with a check and an optional X (clear, only with `with_clear(true)` and text); Enter confirms, Escape, Back and focus loss cancel; `EditableLabelState` with the committed text, the draft and `Started`/`Confirmed`/`Cancelled`/`Cleared` events, the soft keyboard left to the app; icons from line primitives; theme per 8.5 (`ControlTheme::editable_label`); additive (0.10.2); approved by the owner's request, being built. |
 | [PopupMenu, a call-driven popup menu of actions](docs/design/20261028_06_POPUP_MENU_PLAN.md) | 2026-10-28 | In implementation | A `PopupMenu` anchored to a rect (an app's ⋮), opened and closed by calls on its shared `PopupMenuState` with no gestures of its own, shown as a backdrop-free layer of the modal stack (attached once with `Router::attach_popup_menu`) so an outside tap, Escape or Back dismisses it; actions, headings and separators with an enabled flag and a check; opens below and right-aligned, flipping above or shifting to fit; pointer and Up/Down/Enter keys; `Chosen(id)`/`Dismissed` events; theme per 8.5 (`ControlTheme::popup_menu`); additive (0.10.3); asked by flankr's plugin plan and approved with it, being built. |
 | [A radio style for PopupMenu's mark column](docs/design/20261028_07_POPUP_MENU_RADIO_PLAN.md) | 2026-10-28 | Draft | `PopupMenuOptions::marks(PopupMarkStyle::Radio)` draws each item's `checked` as a ring with a filled dot (⦿, `Some(true)`) or a small dot (⊙, `Some(false)`) from `Outline` and `Circle` primitives, since Roboto lacks the glyphs; per menu, `PopupItem` unchanged, `Check` stays the default; ring and dot sizes in `PopupMenuTheme`, colours defaulting to the label's (no accent); layout and input unchanged; additive (0.10.4); asked by flankr's subagents plan, drafted for the owner's review. |
-| [Scrollbar, sectioned content and bookmarks](docs/design/20261028_08_SCROLLBAR_PLAN.md) | 2026-10-28 | Draft | flankr's agent-view scrollbar as a call-driven `Scrollbar` (4 px thumb, at least 24, 4 px slop, a band that grabs even when invisible, drag scrubs with no fling; `None`/`OnScroll` (2 s hold, 300 ms fade)/`Always`; bookmarks drawn while held as translucent pills, nearest brighter, crowded ones giving way), on a pane by `ScrollPane::with_scrollbar` or standalone; sectioned content drawn by the caller's `render_section(id) -> DrawList` only near the window and cached per `SectionId`, with section anchoring and `scroll_to_section`; bookmarks by `add_bookmark(id, BookmarkText)` (replaces) and `remove_bookmark`, section boundaries not being bookmarks; theme per 8.5 (`ControlTheme::scrollbar`); needs libmsdf 0.6.1's scoped append; additive (0.10.5); asked by the owner for flankr's file preview, drafted for the owner's review. |
+| [Scrollbar, sectioned content and bookmarks](docs/design/20261028_08_SCROLLBAR_PLAN.md) | 2026-10-28 | In implementation | flankr's agent-view scrollbar as a call-driven `Scrollbar` (4 px thumb, at least 24, 4 px slop, a band that grabs even when invisible, drag scrubs with no fling; `None`/`OnScroll` (2 s hold, 300 ms fade)/`Always`; bookmarks drawn while held as translucent pills, nearest brighter, crowded ones giving way), on a pane by `ScrollPane::with_scrollbar` or standalone; sectioned content drawn by the caller's `render_section(id) -> DrawList` only near the window and cached per `SectionId`, with section anchoring and `scroll_to_section`; bookmarks by `add_bookmark(id, BookmarkText)` (replaces) and `remove_bookmark`, section boundaries not being bookmarks; theme per 8.5 (`ControlTheme::scrollbar`); additive; asked by the owner for flankr's file preview and approved; the scrollbar, its bookmarks from an index of sections and the pane (steps 1-5, 8) are built as 0.10.4, and sections drawn by the pane (steps 6-7) wait for libmsdf's scoped append. |
 | [MarkdownView, basic Markdown behind a feature](docs/design/20261028_09_MARKDOWN_VIEW_PLAN.md) | 2026-10-28 | Draft | flankr-markdown's layout and the app's `MarkdownView` moved into a `markdown` module, basic formatting only, measured by libcontrols' own faces (no callback), links by index, themed per 8.5 (`ControlTheme::markdown`, unconditional); feature `markdown` with a minimal parser (paragraphs, bold, italic, code, bare links) and feature `cmark` adding pulldown-cmark 0.13 for CommonMark blocks, none by default; `parse_inline` for `BookmarkText::Markdown` pills; additive (0.10.6); asked by the owner, drafted for the owner's review. |

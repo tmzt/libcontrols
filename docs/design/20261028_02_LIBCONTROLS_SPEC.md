@@ -827,3 +827,99 @@ earlier text except the version in section 10 and the test counts in 11.
    `PopupMenuResolved` are `#[non_exhaustive]`; `PopupItem` is a plain
    struct with public fields.
 5. **11:** `tests/popup_menu.rs` adds 20 router tests.
+
+## Amendment — 2026-10-28 23:26 EDT: Scrollbar and the index of sections (sections 4.7, 6, 8, 10, 11)
+
+Plan `docs/design/20261028_08_SCROLLBAR_PLAN.md`, steps 1-5 and 8, release
+0.10.4 (`v0.10.4`); the commit is the one that adds `src/scrollbar/`.
+This adds sections 6.17 and 6.18 and extends 4.7, 6.12, 8, 10 and 11; it
+replaces no earlier text except the version in section 10 and the test
+counts in 11. The plan's steps 6 and 7 (sections drawn by a pane through
+`render_section`, their cache, anchoring and `Router::scroll_to_section`)
+are not built: they need a libmsdf scoped append, and the libmsdf pin in
+section 3 is unchanged.
+
+1. **4.7:** a pane with `with_scrollbar` takes a press in its scrollbar's
+   band before its children (the innermost such pane on the hit path):
+   the press grabs the thumb, stops a fling, and its drag and release go
+   to the scrollbar, whose scrubs the router applies with the pane's
+   `scroll_to`; the `Click` after it is dropped. A grab that goes away (a
+   layer opened, the grab moved) ends as a release. The router feeds the
+   scrollbar from the pane on each range update (the viewport as the
+   track, the offset, the content's length, whether the pane is dragged
+   or coasting and when it last moved) and draws it after the pane's clip
+   ends, where the indicator was, with the disabled halving; the
+   indicator is then not drawn. The bookmarks are drawn inside a clip of
+   the viewport in screen pixels. `Router::advance` moves the clocks of
+   panes' scrollbars and of `Scrollbar` nodes and reports them busy while
+   an `OnScroll` thumb is shown or bookmarks are shown or fading. The
+   router keeps the `ScrollbarTheme` of the theme it was last drawn with
+   for input, as it keeps the `ScrollTheme`. A pane without
+   `with_scrollbar` routes, draws and anchors as before.
+2. **6.12:** `ScrollPane::with_scrollbar(ScrollbarOptions)` (vertical panes
+   only; on a horizontal pane it does nothing and `scrollbar()` is
+   `None`) and `ScrollPane::scrollbar() -> Option<&Arc<ScrollbarState>>`;
+   `ScrollState::content_length`.
+3. **6.17 `Scrollbar` (`src/scrollbar/`).** `ScrollbarState` (`Arc`):
+   `new`, `with_sections`, `set_sections`, `set_metrics(offset, content,
+   window)`, `set_scrolling`, `advance(dt) -> bool`, `take_events`,
+   `is_held`, `alpha`, `bookmarks_alpha`, `press`, `drag_to`, `release`,
+   `cancel`. The thumb is `width` wide, its length the window's share of
+   the content times the track's height, at least `min_length` and at
+   most the track, its top `track.y + offset / range * (track.h -
+   length)`, its right edge `slop` in from the track's; none when the
+   range is 0.5 or less or the window is empty. The band is the thumb's
+   left less `slop` to the track's right edge, the track's height, and
+   exists whenever there is a thumb and the visibility is not `None`. A
+   press on the thumb grabs at the touch; elsewhere in the band the grab
+   is half the thumb and it scrubs there at once. A move scrubs to
+   `clamp((y - grab - track.y) / (track.h - length), 0, 1) * range`;
+   release leaves the offset. `ScrollbarVisibility` (`None`, `OnScroll`
+   the default, `Always`): `OnScroll` is the resolved `alpha` while held or
+   scrolling and `hold` after, then fades over `fade`. `ScrollbarEvent`
+   (`Grabbed { offset }`, `Scrub { offset, section, bookmark }`,
+   `Released { offset, section, bookmark }`; `section` is the section at
+   the offset and `bookmark` the bookmark nearest the thumb, when the
+   state has sections). Bookmarks are drawn while held and `hold` after,
+   then fading, in every visibility: each pill centred across the track at
+   `track.y + top / content * track.h`, `font_size * line_height + 2 *
+   pad_y` tall, the text's advance plus `2 * pad_x` wide, radius half its
+   height, the text cut with "…" to the track's width less `2 *
+   side_margin + 2 * pad_x`; at `bookmark_bg_alpha`/`bookmark_text_alpha`
+   of the bookmark colour, the nearest at the `near` alphas, all times the
+   fade; placed nearest first when clear of those placed by `gap`, and
+   drawn top to bottom. `BookmarkText::Markdown` is drawn as written. The
+   `Scrollbar` node (`new(track, options)`, `with_state`, `state`,
+   `set_track`, `track`, `resolved`, `thumb_rect`, `band_rect`,
+   `bookmark_layout -> Vec<BookmarkPill>`) hit-tests only its band
+   (`ControlPart::Thumb`), routes `Down`, `Drag` and `Up` to the state,
+   claims its drag, is not a Tab stop, answers no `ControlAction`, and
+   draws its thumb (a `RoundedBox` of radius `width / 2` in the resolved
+   colour at the state's alpha) and its bookmarks without a clip.
+4. **6.18 Sections (`src/sections.rs`), an index only:** `SectionId(pub
+   u64)`, `Section { id, height, estimated }` (`new`, `estimated`),
+   `BookmarkText` (`Text`, `Markdown`) and `SectionedContent` (`Arc`):
+   `new`, `set_sections`, `push`, `insert`, `remove`, `set_height`, `len`,
+   `is_empty`, `sections`, `total_height`, `offset_of`, `section_at`,
+   `add_bookmark` (replaces), `remove_bookmark`, `clear_bookmarks`,
+   `bookmarks` (in section order). Bookmarks are kept by id and shown only
+   while a section with that id exists. There is no `SectionSource`,
+   `SectionContext` or drawing cache in this release.
+5. **8, theme:** `ControlTheme::scrollbar: ScrollbarTheme` (`width` 4,
+   `min_length` 24, `slop` 4, `color` `None` = `text_color`, `alpha`
+   0.35, `hold` 2.0, `fade` 0.3, `bookmark_color` `None` = `text_color`,
+   `bookmark_bg_alpha` 0.10, `bookmark_text_alpha` 0.60,
+   `bookmark_near_bg_alpha` 0.20, `bookmark_near_text_alpha` 0.90,
+   `bookmark_font_size` 13, `bookmark_line_height` 1.35,
+   `bookmark_pad_x` 12, `bookmark_pad_y` 4, `bookmark_side_margin` 24,
+   `bookmark_gap` 2, and `bookmark_code_pad` 2 and `bookmark_code_radius`
+   3, which nothing reads yet), overridden per scrollbar by
+   `ScrollbarOptions` (one setter per value, plus the per-instance
+   `visibility` and `bookmarks`) and resolved by `with_theme` into
+   `ScrollbarResolved`: built to section 8.5's standard.
+6. **10:** the crate is 0.10.4. `ScrollbarVisibility`, `ScrollbarEvent`
+   (and its variants), `ScrollbarTheme`, `ScrollbarOptions`,
+   `ScrollbarResolved`, `BookmarkPill`, `BookmarkText` and `Section` are
+   `#[non_exhaustive]`.
+7. **11:** `src/scrollbar/` and `src/sections.rs` add 11 unit tests, and
+   `tests/scrollbar.rs` adds 21 router tests.

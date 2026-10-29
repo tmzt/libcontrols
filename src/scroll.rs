@@ -18,6 +18,7 @@ use crate::event::{ControlAction, ControlPart, EventContext, KeyboardEvent, Mous
 use crate::flags::NodeFlags;
 use crate::rect::Rect;
 use crate::router::NodeId;
+use crate::scrollbar::{ScrollbarOptions, ScrollbarState, ScrollbarTheme};
 use crate::theme::ScrollTheme;
 use crate::traits::{DrawContext, DrawControl};
 
@@ -178,6 +179,10 @@ impl Inner {
 
     pub(crate) fn max(&self) -> f32 {
         self.max
+    }
+
+    pub(crate) fn last_moved(&self) -> f64 {
+        self.last_moved
     }
 
     pub(crate) fn is_following(&self) -> bool {
@@ -490,6 +495,11 @@ impl ScrollState {
     pub fn is_moving(&self) -> bool {
         self.with(|s| s.drag.is_some() || s.fling != 0.0 || s.over != 0.0 || s.over_vel != 0.0)
     }
+
+    /// The content's length along the axis, as the last range update had it.
+    pub fn content_length(&self) -> f32 {
+        self.with(|s| s.content)
+    }
 }
 
 /// A node whose children are laid out on a content plane, from the
@@ -504,6 +514,8 @@ pub struct ScrollPane {
     indicator: bool,
     overscroll: Overscroll,
     background: Option<[f32; 4]>,
+    /// A scrollbar in place of the indicator (vertical panes only).
+    scrollbar: Option<(ScrollbarOptions, Arc<ScrollbarState>)>,
 }
 
 impl fmt::Debug for ScrollPane {
@@ -528,6 +540,7 @@ impl ScrollPane {
             indicator: true,
             overscroll: Overscroll::None,
             background: None,
+            scrollbar: None,
         };
         pane.state.with(|s| s.axis = axis);
         pane
@@ -571,6 +584,35 @@ impl ScrollPane {
         self
     }
 
+    /// A scrollbar instead of the indicator
+    /// (docs/design/20261028_08_SCROLLBAR_PLAN.md): the router feeds it from
+    /// this pane, gives it presses in its band before the children, applies
+    /// its scrubs and draws it where the indicator was. Vertical panes only:
+    /// on a horizontal pane this does nothing and the indicator stays.
+    #[must_use]
+    pub fn with_scrollbar(mut self, options: ScrollbarOptions) -> Self {
+        if self.axis == ScrollAxis::Vertical {
+            let state = ScrollbarState::new();
+            state.with(|s| {
+                s.visibility = options.visibility;
+                s.bookmarks_on = options.bookmarks_on();
+                s.resolved = options.with_theme(&Default::default());
+            });
+            self.scrollbar = Some((options, state));
+        }
+        self
+    }
+
+    /// Its scrollbar's state, when it has one. Give it sections with
+    /// [`ScrollbarState::set_sections`] for bookmarks.
+    pub fn scrollbar(&self) -> Option<&Arc<ScrollbarState>> {
+        self.scrollbar.as_ref().map(|(_, s)| s)
+    }
+
+    pub(crate) fn scrollbar_parts(&self) -> Option<(&ScrollbarOptions, &Arc<ScrollbarState>)> {
+        self.scrollbar.as_ref().map(|(o, s)| (o, s))
+    }
+
     /// Fill the viewport with `color` beneath the content.
     #[must_use]
     pub fn with_background(mut self, color: [f32; 4]) -> Self {
@@ -611,8 +653,9 @@ impl ScrollPane {
         self.anchoring
     }
 
+    /// The indicator is drawn: on, and no scrollbar in its place.
     pub(crate) fn shows_indicator(&self) -> bool {
-        self.indicator
+        self.indicator && self.scrollbar.is_none()
     }
 
     /// The overscroll limit in pixels, when it overscrolls.
@@ -628,6 +671,29 @@ impl ScrollPane {
     /// The offset drawn, overscroll included, as a vector.
     pub(crate) fn drawn_offset(&self) -> [f32; 2] {
         self.state.with(|s| self.axis.vector(s.drawn()))
+    }
+
+    /// Feed its scrollbar, if any, from the pane: the viewport as the
+    /// track, the offset, the content's length, and whether and when it
+    /// moved, at router time `now`.
+    pub(crate) fn feed_scrollbar(&self, bar_theme: &ScrollbarTheme, theme: &ScrollTheme, now: f64) {
+        let Some((options, bar)) = self.scrollbar_parts() else {
+            return;
+        };
+        let track = self.viewport.get();
+        let (offset, content, moving, since) = self.state.with(|s| {
+            (
+                s.offset(),
+                s.content,
+                s.is_dragged() || s.is_coasting(theme),
+                now - s.last_moved(),
+            )
+        });
+        let resolved = options.with_theme(bar_theme);
+        bar.with(|b| {
+            b.resolved = resolved;
+            b.feed_pane(track, offset, content, moving, since);
+        });
     }
 
     /// Draw the indicator along the viewport's trailing edge.

@@ -23,6 +23,8 @@ pub mod rect;
 pub mod ring;
 pub mod router;
 pub mod scroll;
+pub mod scrollbar;
+pub mod sections;
 pub mod selectable_label;
 pub mod slider;
 pub mod slider_numeric;
@@ -71,6 +73,11 @@ pub use rect::{Rect, TextAlign};
 pub use ring::{GlowRingStyle, draw_glowing_ring};
 pub use router::{DragGrab, EventResponse, NameError, NodeId, ParseNodeIdError, Router};
 pub use scroll::{Overscroll, ScrollAxis, ScrollEdge, ScrollPane, ScrollState};
+pub use scrollbar::{
+    BookmarkPill, Scrollbar, ScrollbarEvent, ScrollbarOptions, ScrollbarResolved, ScrollbarState,
+    ScrollbarTheme, ScrollbarVisibility,
+};
+pub use sections::{BookmarkText, Section, SectionId, SectionedContent};
 pub use selectable_label::{SelectableLabel, SelectableLabelState};
 pub use slider::{Slider, SliderState, ThumbStyle};
 pub use slider_numeric::{NumericFormat, SliderNumeric, SliderNumericActive, SliderNumericState};

@@ -1,7 +1,7 @@
 ---
 title: Scrollbar, sectioned content and bookmarks
 date: 2026-10-28
-status: Draft
+status: In implementation
 covers: >
   A `Scrollbar` control backported from flankr's agent view: a 4 px thumb
   at least 24 px long with a 4 px touch slop either side, whose band takes
@@ -1023,3 +1023,16 @@ The version follows release order (decision of section 5): this release
 is built before the radio-style plan (20261028_07, a Draft), so it is
 **0.10.4**, not the drafted 0.10.5. The status stays `Draft` until the
 first implementing commit, which sets `In implementation` (Rule 1.5).
+
+## Amendment — 2026-10-28 23:25 EDT: implementation started; the document is now immutable
+
+Implementation starts with this amendment, in the worktree
+`.claude/worktrees/scrollbar` on the branch `wt-scrollbar` from
+`e7a345c`: `status` is `In implementation`, and the body above is frozen
+(AGENTS.md Rule 1.5). The scope is the 23:13 EDT amendment's: steps 1-5
+and step 8, released as 0.10.4. Steps 6 and 7 are not built; until
+libmsdf's scoped append is planned and released, `SectionedContent` is
+only the index of sections and bookmarks (decision 9's fallback), with no
+source, no drawing cache and no `ScrollPane::with_sections`. The open
+questions of section 8 stay open for the owner; the code follows the
+decisions as written. Departures are recorded in `CHANGES.md`.
