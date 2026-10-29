@@ -1,7 +1,7 @@
 ---
 title: PopupMenu toggle items and columns
 date: 2026-10-28
-status: In implementation
+status: Implemented
 covers: >
   Two additions to the `PopupMenu`, in one release because both change
   what a menu row is and how it is chosen or drawn. (1) Toggle items:
@@ -593,3 +593,10 @@ The scope is every step, 1-4, released as **0.10.6**. The open questions
 keep this plan's own choices: no `replace_rows` (1), plain labels drawn
 uncut (2), `PopupRow` rather than a field on `PopupItem` (3), and no
 exported column function (4). Departures are recorded in `CHANGES.md`.
+
+## Amendment — 2026-10-28 23:52 EDT: implemented
+
+Every step is done and its **Done when:** holds, in 97c2804 (steps 1-4: the
+toggles, the rows, cells and columns, their drawing, and the spec, README
+and 0.10.6, tag `v0.10.6`), with the departures recorded in CHANGES.md.
+Status `Implemented`.
