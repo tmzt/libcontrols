@@ -478,3 +478,39 @@ Departures from the plan (Rule 1.7):
 2. Step 2: two tests beyond the list: a dot radius larger than the ring
    is clamped to `R - t`, and rows with cells put their radio marks in
    the same mark column, left of the first column of cells.
+
+## 2026-10-29 00:10 EDT — Sections drawn by a scroll pane, steps 6-7 (plan 20261028_08_SCROLLBAR_PLAN)
+
+Planned work resumed: the Scrollbar plan's steps 6 and 7, deferred by its
+23:13 EDT amendment until libmsdf's `DrawList::append_scoped`, now
+released as libmsdf 0.6.1 (tag `v0.6.1`, 76448a7; libmsdf plan
+20261028_02_SCOPED_APPEND_PLAN). Sections drawn by a pane through
+`render_section(id) -> DrawList`, cached per `SectionId`, with heights,
+section anchoring and `Router::scroll_to_section`; additive, 0.10.8 (tag
+`v0.10.8`, 1d813a1); the libmsdf pin moves 0.6.0 → 0.6.1 (compatible). flankr
+moves its libmsdf pin to the same rev when it takes this release.
+
+Departures (Rule 1.7):
+1. Decision 9 and step 6: libmsdf's call takes an `offset: [f32; 2]` the
+   plan does not spell. Sections are placed with
+   `append_scoped(&kept, [vp.x, vp.y + top])` inside the pane's translate,
+   instead of `push_translate(vp.x, vp.y + top)`, an append and the end
+   (libmsdf plan 3.8-3.9): the same pixels, one transform fewer per
+   section.
+2. Section 3: `with_source`/`set_source` take
+   `Arc<dyn SectionSource + Send + Sync>`, so `SectionedContent` stays
+   `Send + Sync` as released in 0.10.4; the trait has no bound (open
+   question 4). Agreed by the owner (2026-10-29, "Accept and release").
+3. Step 6: "a second frame renders nothing" contradicts decision 7's two
+   prefetches a frame; the second frame renders no visible section and at
+   most two prefetches, and once the margin is full a frame renders
+   nothing.
+4. Decision 10: a reported height that changes the list re-anchors in the
+   same frame, and one more round draws the sections then in view (the
+   prefetch limit shared), so the content does not jump for a frame.
+5. Decision 7: freshness is one width-and-theme generation, so returning
+   to an earlier width or theme redraws.
+6. Section anchoring takes the place of node anchoring for the update it
+   applies to; the shift held back under a held thumb is applied on the
+   first update after release; `scroll_to_section` re-records the anchors;
+   `set_source` drops every drawing.
