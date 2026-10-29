@@ -372,3 +372,34 @@ Small departures, none changing the plan's interfaces:
 2. Opening through the state does not run the router's `layer_opened`
    (it needs the router); the app's hover and grab are cleared on the next
    routed event instead (`run_layers`), as for any layer.
+
+## 2026-10-28 23:27 EDT — Scrollbar and bookmarks, steps 1-5 and 8 (plan 20261028_08_SCROLLBAR_PLAN)
+
+New work: flankr's agent-view scrollbar backported as a `Scrollbar`
+control, with bookmarks added on a section's id, asked by the owner ("we
+should backport the advanced scrollbar to libcontrols and use it for the
+file viewer, with the optional features like labels") for flankr's file
+preview (~/src/flankr/docs/design/20261028_05_BINARY_FILES_PLAN.md, its
+23:00 EDT amendment). Plan docs/design/20261028_08_SCROLLBAR_PLAN.md,
+approved (its 23:13 EDT amendment): steps 1-5 and 8 only, additive, 0.10.4
+(tag `v0.10.4`). Steps 6-7 (sections drawn by a pane) wait for libmsdf's
+scoped append; until then `SectionedContent` is only an index of sections
+and bookmarks (decision 9's fallback).
+
+Departures (Rule 1.7, small):
+1. Decisions 2, 3 and 5: the thumb's length and travel, the drag and the
+   bookmarks' places use the track's height where the formulas say the
+   window; on a pane they are the same. Standalone, this keeps the thumb
+   inside the track when the fed window and the track differ.
+2. Decision 5: a standalone `Scrollbar` node draws its pills without a
+   clip, since a node does not know its screen position and libmsdf clips
+   are in screen pixels; on a pane the router clips them to the viewport.
+3. Step 2's "moving 75 (a quarter of the 750 travel) scrubs to 750": a
+   quarter of 750 is 187.5; the tests move 187.5 to scrub to 750.
+4. Step 4: the text alphas (0.60, 0.90) are tested on the colour helper,
+   as the router fixture has no shaper and draws no glyphs.
+5. `ScrollbarState` keeps the track and resolved theme values it reads,
+   since `press`, `drag_to` and `release` take no track; the theme's
+   `bookmark_code_pad` and `bookmark_code_radius` are unused until
+   Markdown bookmarks are drawn; a pane's scrollbar state is not kept
+   across rebuilds (no `with_scrollbar_state`).
