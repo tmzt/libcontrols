@@ -1149,3 +1149,20 @@ drawing cache, the version in section 10 and the test counts in 11.
 6. **11:** `src/sections.rs` adds 2 unit tests (13 in `src/scrollbar/`
    and `src/sections.rs`), and `tests/sections.rs` adds 18 router tests,
    in every build.
+
+## Amendment — 2026-10-29 18:56 EDT: libmsdf 0.7.0 (sections 3, 10)
+
+Release 0.11.0 (`v0.11.0`), taking libmsdf 0.7.0 (libmsdf's plan
+`20261029_01_MATERIAL_SYMBOLS_CORE_SET_PLAN`). This replaces the libmsdf
+rev in section 3 as amended at 2026-10-29 00:07 EDT and the version in
+section 10. Release 0.10.9 (libmsdf 0.6.2, rev `bd7383d`) was not
+recorded here; this amendment supersedes it as well.
+
+1. **3:** libmsdf is pinned at rev
+   `97b0f07581efde67ef548a901ff2927d2e43095e` (0.7.0). libcontrols does
+   not name the merged `RobotoMsymbols` atlases or call `cell()`; text
+   from whatever atlas a host passes in `DrawContext` is drawn by
+   libmsdf, so those atlases' new cell box reaches controls unchanged.
+2. **10:** the crate is 0.11.0, a minor release because the libmsdf move
+   is not semver-compatible (Rule 5.5); no libcontrols type or signature
+   changes.

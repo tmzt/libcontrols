@@ -457,3 +457,21 @@ No API change: the libmsdf pin moves 0.6.1 → 0.6.2 (`bd7383d`, tag
 semver-compatible move. A caller drawing with libcontrols moves its own
 libmsdf pin to the same rev, since a `DrawList` from another rev is another
 type.
+
+## 0.11.0 — 2026-10-29 (tag `v0.11.0`)
+
+The libmsdf pin moves 0.6.2 → 0.7.0 (`97b0f07`, tag `v0.7.0`, a core set
+of Material Symbols in the merged Roboto face), a move that is not
+semver-compatible, so a minor release (Rule 5.5). libcontrols' own types
+and signatures do not change, and it does not name the merged atlases or
+call `cell()` itself.
+
+- **Breaking:** libmsdf 0.6.2 → 0.7.0. Through it,
+  `ROBOTO_MSYMBOLS_ATLAS` and `ROBOTO_MSYMBOLS_STYLED_ATLAS` are atlas
+  format 5:0.2.0 with a `CELL` table, `BundledAtlas::RobotoMsymbols.cell()`
+  and `RobotoMsymbolsStyled.cell()` return `CellBox { above_em: 0.1,
+  below_em: -0.1 }`, and text and icons that controls draw from those
+  atlases come from a cell 0.1 em higher (positions and baselines
+  unchanged). A caller drawing with libcontrols moves its own libmsdf pin
+  to the same rev, since a `DrawList` or `FontAtlas` from another rev is
+  another type.
