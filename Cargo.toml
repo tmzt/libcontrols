@@ -1,6 +1,6 @@
 [package]
 name = "libcontrols"
-version = "0.10.8"
+version = "0.10.9"
 edition = "2024"
 license = "MIT"
 description = "UI controls (labels, buttons, sliders, radios, option grids, panels, dialogs) drawn as MSDF primitives and owned by a persistent router"
@@ -15,7 +15,7 @@ markdown = []
 cmark = ["markdown", "dep:pulldown-cmark"]
 
 [dependencies]
-libmsdf = { git = "https://github.com/tmzt/libmsdf", rev = "76448a74b9f52bcd1bb40506f06975cfd92e8b28" }
+libmsdf = { git = "https://github.com/tmzt/libmsdf", rev = "bd7383dcb936c987dfd7f777e9b3baecbe3317e7" }
 wgpu = "30.0.1"
 bytemuck = { version = "1", features = ["derive"] }
 pulldown-cmark = { version = "0.13", default-features = false, optional = true }

@@ -449,3 +449,11 @@ libmsdf moves from 0.6.0 to 0.6.1 (rev `76448a7`, compatible), for
 - Added: a pane with sections takes its content length from them (or a
   further child), anchors on the first section in view, and gives a
   scrollbar on it the sections' bookmarks.
+
+## 0.10.9 — 2026-10-29 (tag `v0.10.9`)
+
+No API change: the libmsdf pin moves 0.6.1 → 0.6.2 (`bd7383d`, tag
+`v0.6.2`, the coding-agent glyphs on the terminal symbol page), a
+semver-compatible move. A caller drawing with libcontrols moves its own
+libmsdf pin to the same rev, since a `DrawList` from another rev is another
+type.
