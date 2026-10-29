@@ -1,7 +1,7 @@
 ---
 title: Scrollbar, sectioned content and bookmarks
 date: 2026-10-28
-status: In implementation
+status: Implemented
 covers: >
   A `Scrollbar` control backported from flankr's agent view: a 4 px thumb
   at least 24 px long with a 4 px touch slop either side, whose band takes
@@ -1036,3 +1036,17 @@ only the index of sections and bookmarks (decision 9's fallback), with no
 source, no drawing cache and no `ScrollPane::with_sections`. The open
 questions of section 8 stay open for the owner; the code follows the
 decisions as written. Departures are recorded in `CHANGES.md`.
+
+## Amendment — 2026-10-29 00:10 EDT: implemented
+
+Every step is done and its **Done when:** holds (step 6's "a second frame
+renders nothing" as recorded in CHANGES.md, the 2026-10-29 00:10 EDT addendum, departure 3);
+status `Implemented`. The body stays frozen. Commits:
+- Steps 1-5 and 8 (0.10.4, `v0.10.4`): ce279d3.
+- Steps 6 and 7, with step 8's spec amendment, README, VERSIONS entry,
+  version and libmsdf pin (0.10.8, `v0.10.8`, libmsdf 0.6.1 at 76448a7):
+  1d813a1.
+Departures are in CHANGES.md (the 23:27 EDT addendum for steps 1-5, the
+2026-10-29 00:10 EDT addendum for steps 6-7). The open questions of section 8 stay open for
+the owner; open question 1 is answered by libmsdf plan
+20261028_02_SCOPED_APPEND_PLAN (0.6.1).
