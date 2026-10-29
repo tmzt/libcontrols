@@ -427,3 +427,25 @@ the check in either style.
   `PopupMenuResolved`: `radio_radius`, `radio_thickness`,
   `radio_dot_radius`, `radio_empty_dot_radius`, `radio_ring_color`,
   `radio_dot_color`.
+
+## 0.10.8 — 2026-10-29 (tag `v0.10.8`)
+
+Sections drawn by a scroll pane (docs/design/20261028_08_SCROLLBAR_PLAN.md,
+steps 6 and 7). Additive: new types, a new trait, new methods; panes
+without `with_sections` route, draw and anchor as before, and a
+`SectionedContent` without a source is the index it was in 0.10.4.
+libmsdf moves from 0.6.0 to 0.6.1 (rev `76448a7`, compatible), for
+`DrawList::append_scoped`.
+
+- Added: `SectionSource` (`render_section(id, &SectionContext) ->
+  DrawList`), with an impl for every `Fn(SectionId, &SectionContext) ->
+  DrawList`; `SectionContext` (`id`, `index`, `width`, `height`, `draw`,
+  `report_height`).
+- Added: `SectionedContent::with_source`, `set_source`, `invalidate`,
+  `invalidate_all`, `is_cached`, `set_prefetch`, `set_prefetch_per_frame`,
+  `set_keep`, `set_max_cached`.
+- Added: `ScrollPane::with_sections`, `ScrollPane::sections`;
+  `Router::scroll_to_section`.
+- Added: a pane with sections takes its content length from them (or a
+  further child), anchors on the first section in view, and gives a
+  scrollbar on it the sections' bookmarks.

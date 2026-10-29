@@ -1089,3 +1089,63 @@ and the test counts in 11.
 4. **11:** `tests/popup_menu.rs` adds 10 router tests (45 in all), and
    `src/popup_menu.rs` 1 unit test of the radio values' resolution (8 in
    all), in every build.
+
+## Amendment — 2026-10-29 00:07 EDT: Sections drawn by a scroll pane (sections 3, 4.7, 6.12, 6.18, 10, 11)
+
+Plan `docs/design/20261028_08_SCROLLBAR_PLAN.md`, steps 6 and 7, release
+0.10.8 (`v0.10.8`). This extends sections 4.7, 6.12 and 6.18 as amended
+at 2026-10-28 23:26 EDT, and replaces the libmsdf rev in section 3, the
+sentence of 6.18 that there is no `SectionSource`, `SectionContext` or
+drawing cache, the version in section 10 and the test counts in 11.
+
+1. **3:** libmsdf is pinned at rev
+   `76448a74b9f52bcd1bb40506f06975cfd92e8b28` (0.6.1), for
+   `DrawList::append_scoped(&other, offset)`.
+2. **4.7:** a pane with `with_sections` whose content has a source asks
+   the source, in its draw pass and before placing anything, for every
+   section overlapping its window with no fresh drawing, and for at most
+   `prefetch_per_frame` more within `prefetch` window lengths either
+   side, nearest first; the content's lock is not held across the calls.
+   When a reported height changes the list, the pane's range and anchoring
+   are brought up to date at once and the sections then in view are drawn
+   (one more round). Inside the pane's clip and `push_translate(-offset)`,
+   before its children, each section in the window and margin with a
+   drawing for the frame's width and theme is appended with
+   `append_scoped(&kept, [vp.x, vp.y + top])` (`[vp.x + top, vp.y]` on a
+   horizontal pane), with the disabled halving; then drawings further than
+   `keep` window lengths from the window, and the furthest beyond
+   `max_cached`, are dropped. The content's length is the sections'
+   total height, or the furthest child's edge when further, unless
+   `with_content_size` gives it. Anchoring by section: each range update
+   keeps the sections overlapping the window and their tops; on the next,
+   when the first of them still present has moved by `d`, the offset
+   shifts by `d` (under node anchoring's conditions, and instead of it).
+   While the pane's scrollbar thumb is held the shift is held back and
+   applied on the first update after release. `Router::scroll_to_section
+   (pane, id) -> bool` scrolls so the section's top is at the window's
+   top, clamped, stopping a fling; `false` when the node is not a pane,
+   has no sections or no such id.
+3. **6.12:** `ScrollPane::with_sections(Arc<SectionedContent>)` and
+   `ScrollPane::sections()`. A scrollbar on a pane with sections (either
+   call first) is given them for its bookmarks.
+4. **6.18 Sections:** `SectionSource` (`render_section(&self, id, cx:
+   &SectionContext) -> DrawList`, in section coordinates: top-left
+   `[0, 0]`, `cx.width()` wide), implemented for every `Fn(SectionId,
+   &SectionContext) -> DrawList`. `SectionContext` (`#[non_exhaustive]`):
+   `id`, `index`, `width` (the viewport's), `height` (the list's),
+   `draw` (the frame's `DrawContext`), `report_height(h)`: a report
+   differing by more than 0.5 becomes the height and clears `estimated`.
+   `SectionedContent::with_source(Arc<dyn SectionSource + Send + Sync>)`
+   and `set_source(Option<..>)` (dropping every drawing); `invalidate(id)`
+   and `invalidate_all()` drop drawings (one invalidated while it is being
+   drawn is kept stale: drawn that frame and drawn again on the next);
+   `is_cached(id)`; `set_prefetch` (1.0), `set_prefetch_per_frame` (2),
+   `set_keep` (3.0), `set_max_cached` (128). A drawing is fresh while the
+   width and theme (`PartialEq`) it was drawn for are the frame's.
+   `set_sections` keeps the drawings of ids still present; `remove` drops
+   that id's. A content without a source is an index, as before, and a pane
+   given one draws nothing of it.
+5. **10:** the crate is 0.10.8. `SectionContext` is `#[non_exhaustive]`.
+6. **11:** `src/sections.rs` adds 2 unit tests (13 in `src/scrollbar/`
+   and `src/sections.rs`), and `tests/sections.rs` adds 18 router tests,
+   in every build.

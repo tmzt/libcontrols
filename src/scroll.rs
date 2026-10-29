@@ -19,6 +19,7 @@ use crate::flags::NodeFlags;
 use crate::rect::Rect;
 use crate::router::NodeId;
 use crate::scrollbar::{ScrollbarOptions, ScrollbarState, ScrollbarTheme};
+use crate::sections::{SectionId, SectionedContent};
 use crate::theme::ScrollTheme;
 use crate::traits::{DrawContext, DrawControl};
 
@@ -121,6 +122,12 @@ pub(crate) struct Inner {
     /// The children in view at the last range update, from the leading
     /// edge, with their leading edges then.
     pub(crate) anchors: Vec<(NodeId, f32)>,
+    /// The sections in view at the last range update, from the leading
+    /// edge, with their tops then (a pane with sections).
+    pub(crate) section_anchors: Vec<(SectionId, f32)>,
+    /// The anchoring shift held back while the scrollbar's thumb is held,
+    /// applied on release.
+    pub(crate) held_shift: f32,
     /// When it last moved, on router time.
     last_moved: f64,
 }
@@ -141,6 +148,8 @@ impl Default for Inner {
             fling: 0.0,
             drag: None,
             anchors: Vec::new(),
+            section_anchors: Vec::new(),
+            held_shift: 0.0,
             last_moved: f64::NEG_INFINITY,
         }
     }
@@ -516,6 +525,8 @@ pub struct ScrollPane {
     background: Option<[f32; 4]>,
     /// A scrollbar in place of the indicator (vertical panes only).
     scrollbar: Option<(ScrollbarOptions, Arc<ScrollbarState>)>,
+    /// Its content as sections drawn by their source.
+    sections: Option<Arc<SectionedContent>>,
 }
 
 impl fmt::Debug for ScrollPane {
@@ -541,6 +552,7 @@ impl ScrollPane {
             overscroll: Overscroll::None,
             background: None,
             scrollbar: None,
+            sections: None,
         };
         pane.state.with(|s| s.axis = axis);
         pane
@@ -597,14 +609,40 @@ impl ScrollPane {
                 s.visibility = options.visibility;
                 s.bookmarks_on = options.bookmarks_on();
                 s.resolved = options.with_theme(&Default::default());
+                s.sections = self.sections.clone();
             });
             self.scrollbar = Some((options, state));
         }
         self
     }
 
+    /// Its content as `sections`, drawn by their source
+    /// (docs/design/20261028_08_SCROLLBAR_PLAN.md, decisions 7-11): the
+    /// router draws the sections in or near the window before the children,
+    /// from the content's per-id cache, and asks the source only for those
+    /// with no fresh drawing. The content's length is the sections' total
+    /// height, or the furthest child's edge when that is further, unless
+    /// [`with_content_size`](Self::with_content_size) gives it. With
+    /// anchoring on, the first section in view stays in place when sections
+    /// before it change height. A scrollbar on the pane takes its bookmarks
+    /// from them.
+    #[must_use]
+    pub fn with_sections(mut self, sections: Arc<SectionedContent>) -> Self {
+        if let Some((_, bar)) = &self.scrollbar {
+            bar.set_sections(Some(sections.clone()));
+        }
+        self.sections = Some(sections);
+        self
+    }
+
+    /// Its sections, when it has them.
+    pub fn sections(&self) -> Option<&Arc<SectionedContent>> {
+        self.sections.as_ref()
+    }
+
     /// Its scrollbar's state, when it has one. Give it sections with
-    /// [`ScrollbarState::set_sections`] for bookmarks.
+    /// [`ScrollbarState::set_sections`] for bookmarks; a pane with
+    /// [`with_sections`](Self::with_sections) gives it its own.
     pub fn scrollbar(&self) -> Option<&Arc<ScrollbarState>> {
         self.scrollbar.as_ref().map(|(_, s)| s)
     }

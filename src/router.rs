@@ -3,7 +3,7 @@
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -20,6 +20,7 @@ use crate::flags::{NodeFlags, NodeState};
 use crate::rect::Rect;
 use crate::scroll::{ScrollAxis, ScrollPane};
 use crate::scrollbar::{Scrollbar, ScrollbarTheme, draw_bar};
+use crate::sections::SectionId;
 use crate::symbol::Symbol;
 use crate::theme::ScrollTheme;
 use crate::traits::{DrawContext, DrawControl};
@@ -687,6 +688,11 @@ impl Router {
             }
             return;
         };
+        if !overlay {
+            // Draw the sections that need it first: a reported height may
+            // move the offset (anchoring) before anything is placed.
+            self.render_sections(index, pane, &Self::node_context(ctx, node));
+        }
         let vp = pane.viewport();
         let off = pane.drawn_offset();
         if !overlay {
@@ -695,6 +701,24 @@ impl Router {
             list.push_clip([vp.x - shift[0], vp.y - shift[1]], vp.size());
         }
         list.push_translate(-off[0], -off[1]);
+        if !overlay && let Some(content) = pane.sections() {
+            // Each kept section under the pane's clip and translate, at its
+            // top in content coordinates, before the children.
+            let axis = pane.axis();
+            let (_, len) = axis.span(vp);
+            let start = axis.of(off);
+            let first = list.instances.len();
+            content.draw_into(list, start, len, |top| match axis {
+                ScrollAxis::Vertical => [vp.x, vp.y + top],
+                ScrollAxis::Horizontal => [vp.x + top, vp.y],
+            });
+            if disabled {
+                for instance in &mut list.instances[first..] {
+                    instance.color[3] *= 0.5;
+                }
+            }
+            content.evict(start, len);
+        }
         let mut inner = visible.map_or(vp, |v| intersect(vp, v));
         inner.x += off[0];
         inner.y += off[1];
@@ -1843,9 +1867,70 @@ impl Router {
         }
     }
 
-    /// One pane's range: the content's length from the app or the
-    /// children, then anchoring, then the offset clamped, then the anchors
-    /// for next time.
+    /// Ask the source of a pane's sections for those in or near its window
+    /// with no fresh drawing, and keep them. A reported height that changes
+    /// the list re-anchors the pane at once, and the sections then in view
+    /// are drawn too (one more round, no more).
+    fn render_sections(&self, index: usize, pane: &ScrollPane, ctx: &DrawContext) {
+        let Some(content) = pane.sections() else {
+            return;
+        };
+        let axis = pane.axis();
+        let width = pane.viewport().w;
+        let mut done: HashSet<SectionId> = HashSet::new();
+        let mut prefetched = 0;
+        for _ in 0..2 {
+            let len = axis.span(pane.viewport()).1;
+            let start = axis.of(pane.drawn_offset());
+            let jobs = content.prepare(width, &ctx.theme, start, len, &done, prefetched);
+            if jobs.is_empty() {
+                return;
+            }
+            prefetched += jobs.iter().filter(|j| j.ahead).count();
+            done.extend(jobs.iter().map(|j| j.id));
+            if !content.render(&jobs, width, ctx) {
+                return;
+            }
+            self.update_pane(index, pane);
+        }
+    }
+
+    /// Scroll a pane so section `id`'s top is at the window's top, clamped
+    /// to the range and stopping a fling, as [`Router::scroll_to`] does.
+    /// Returns `false` when the pane has no sections or no such section.
+    pub fn scroll_to_section(&self, pane: NodeId, id: SectionId) -> bool {
+        let Some(index) = self.index(pane) else {
+            return false;
+        };
+        let Some(p) = self.scroll_at(index) else {
+            return false;
+        };
+        let Some(top) = p.sections().and_then(|c| c.offset_of(id)) else {
+            return false;
+        };
+        self.update_pane(index, p);
+        let now = self.time.get();
+        p.state().with(|s| s.scroll_to(top, now));
+        // Anchor on what is in view now, not where it was.
+        self.record_section_anchors(p);
+        true
+    }
+
+    /// Keep the sections in a pane's window, with their tops, as its
+    /// section anchors.
+    fn record_section_anchors(&self, pane: &ScrollPane) {
+        let Some(content) = pane.sections() else {
+            return;
+        };
+        let (_, vlen) = pane.axis().span(pane.viewport());
+        let offset = pane.state().with(|s| s.offset());
+        let anchors = content.tops_in(offset, offset + vlen.max(f32::MIN_POSITIVE));
+        pane.state().with(|s| s.section_anchors = anchors);
+    }
+
+    /// One pane's range: the content's length from the app, the children
+    /// or the sections, then anchoring, then the offset clamped, then the
+    /// anchors for next time.
     fn update_pane(&self, index: usize, pane: &ScrollPane) {
         let axis = pane.axis();
         let (vlead, vlen) = axis.span(pane.viewport());
@@ -1857,6 +1942,7 @@ impl Router {
             .filter(|n| !n.flags.contains(NodeFlags::HIDDEN))
             .map(|n| (n.id, n.control.bounds()))
             .collect();
+        let sections = pane.sections();
         let content = match pane.content_size() {
             Some(size) => axis.of(size),
             None => children
@@ -1865,14 +1951,53 @@ impl Router {
                     let (lead, len) = axis.span(b);
                     lead + len - vlead
                 })
-                .fold(0.0, f32::max),
+                .fold(sections.map_or(0.0, |c| c.total_height()), f32::max),
         }
         .max(0.0);
         let max = (content - vlen).max(0.0);
+        // Where the section anchors are now (read outside the pane's lock).
+        let section_moved = sections.and_then(|c| {
+            let anchors = pane.state().with(|s| s.section_anchors.clone());
+            let ids: Vec<SectionId> = anchors.iter().map(|&(id, _)| id).collect();
+            c.tops_of(&ids)
+                .into_iter()
+                .zip(&anchors)
+                .find_map(|(now, &(_, then))| now.map(|t| t - then))
+        });
+        let held = pane.scrollbar().is_some_and(|b| b.is_held());
         pane.state().with(|s| {
-            // Scrolled into the content, the children the reader sees stay
-            // where they are when content above them changes.
-            if pane.anchoring() && !s.is_following() && !s.is_dragged() && s.offset() > 0.0 {
+            let anchoring =
+                pane.anchoring() && !s.is_following() && !s.is_dragged() && s.offset() > 0.0;
+            // Scrolled into the content, the section the reader sees stays
+            // where it is when sections before it change height; while the
+            // thumb is held the shift waits for its release.
+            let mut by_section = false;
+            if let Some(d) = section_moved
+                && d != 0.0
+                && anchoring
+            {
+                by_section = true;
+                if held {
+                    s.held_shift += d;
+                } else {
+                    s.shift(d);
+                }
+            }
+            if !held && s.held_shift != 0.0 {
+                let d = std::mem::take(&mut s.held_shift);
+                if anchoring {
+                    s.shift(d);
+                    by_section = true;
+                }
+            }
+            // The children the reader sees stay where they are when content
+            // above them changes.
+            if !by_section
+                && pane.anchoring()
+                && !s.is_following()
+                && !s.is_dragged()
+                && s.offset() > 0.0
+            {
                 let moved = s.anchors.iter().find_map(|&(id, lead)| {
                     children
                         .iter()
@@ -1897,6 +2022,7 @@ impl Router {
             anchors.sort_by(|a, b| a.1.total_cmp(&b.1));
             s.anchors = anchors;
         });
+        self.record_section_anchors(pane);
         pane.feed_scrollbar(
             &self.scrollbar_theme.get(),
             &self.scroll_theme.get(),

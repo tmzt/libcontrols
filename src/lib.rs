@@ -86,7 +86,9 @@ pub use scrollbar::{
     BookmarkPill, Scrollbar, ScrollbarEvent, ScrollbarOptions, ScrollbarResolved, ScrollbarState,
     ScrollbarTheme, ScrollbarVisibility,
 };
-pub use sections::{BookmarkText, Section, SectionId, SectionedContent};
+pub use sections::{
+    BookmarkText, Section, SectionContext, SectionId, SectionSource, SectionedContent,
+};
 pub use selectable_label::{SelectableLabel, SelectableLabelState};
 pub use slider::{Slider, SliderState, ThumbStyle};
 pub use slider_numeric::{NumericFormat, SliderNumeric, SliderNumericActive, SliderNumericState};

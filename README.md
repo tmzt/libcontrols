@@ -227,6 +227,38 @@ with `ScrollbarState::set_metrics` and `set_scrolling`, and reports
 nearest bookmark) through `take_events`. Its numbers are
 `ControlTheme::scrollbar`, overridden per scrollbar by `ScrollbarOptions`.
 
+A pane can also draw its content as sections, for long content such as a
+20 000-line file. `ScrollPane::with_sections` takes a `SectionedContent`
+made with a `SectionSource`, the app's drawing: `render_section(id, cx)`
+returns one section's `DrawList` in section coordinates (top-left at
+`[0, 0]`, `cx.width()` wide). Any `Fn(SectionId, &SectionContext) ->
+DrawList` is a source too.
+
+```rust
+let content = SectionedContent::with_source(Arc::new(
+    move |id: SectionId, cx: &SectionContext| -> DrawList { file.draw_chunk(id, cx.width()) },
+));
+content.set_sections(chunks.iter().map(|c| Section::new(SectionId(c.id), c.height)).collect());
+let pane = ScrollPane::new(viewport, ScrollAxis::Vertical)
+    .with_sections(content.clone())
+    .with_scrollbar(ScrollbarOptions::default());
+```
+
+The pane asks the source only for the sections in the window, and for at
+most two a frame in a one-window margin either side, and keeps each
+drawing per id. It places them under its clip and offset with libmsdf's
+`DrawList::append_scoped`, before its children. A drawing is used again
+until `invalidate(id)` or `invalidate_all()`, or until the width or theme
+changes. Drawings more than three windows away are dropped, and at most
+128 are kept (`set_prefetch`, `set_prefetch_per_frame`, `set_keep`,
+`set_max_cached`). A section's height may be an estimate that its render
+corrects with `cx.report_height(h)`, or be set with `set_height`. When a
+section above the window changes height, or one is inserted or removed
+there, the first section in view stays where it is. While the thumb is
+held, that shift waits for the release. `Router::scroll_to_section(pane,
+id)` puts a section's top at the window's top. A scrollbar on the pane
+takes its bookmarks from the pane's sections.
+
 ## Markdown
 
 Two cargo features, none on by default, add basic Markdown. `markdown`
@@ -290,6 +322,6 @@ MIT License. See LICENSE file for details.
 | [EditableLabel, a label edited in place](docs/design/20261028_05_EDITABLE_LABEL_PLAN.md) | 2026-10-28 | In implementation | A one-node `EditableLabel`: a label with a pencil that switches it to an `Edit` field with a check and an optional X (clear, only with `with_clear(true)` and text); Enter confirms, Escape, Back and focus loss cancel; `EditableLabelState` with the committed text, the draft and `Started`/`Confirmed`/`Cancelled`/`Cleared` events, the soft keyboard left to the app; icons from line primitives; theme per 8.5 (`ControlTheme::editable_label`); additive (0.10.2); approved by the owner's request, being built. |
 | [PopupMenu, a call-driven popup menu of actions](docs/design/20261028_06_POPUP_MENU_PLAN.md) | 2026-10-28 | In implementation | A `PopupMenu` anchored to a rect (an app's ⋮), opened and closed by calls on its shared `PopupMenuState` with no gestures of its own, shown as a backdrop-free layer of the modal stack (attached once with `Router::attach_popup_menu`) so an outside tap, Escape or Back dismisses it; actions, headings and separators with an enabled flag and a check; opens below and right-aligned, flipping above or shifting to fit; pointer and Up/Down/Enter keys; `Chosen(id)`/`Dismissed` events; theme per 8.5 (`ControlTheme::popup_menu`); additive (0.10.3); asked by flankr's plugin plan and approved with it, being built. |
 | [A radio style for PopupMenu's mark column](docs/design/20261028_07_POPUP_MENU_RADIO_PLAN.md) | 2026-10-28 | Implemented | `PopupMenuOptions::marks(PopupMarkStyle::Radio)` draws each action's `checked` as a ring with a filled dot (⦿, `Some(true)`) or a small dot (⊙, `Some(false)`) from `Outline` and `Circle` primitives, since Roboto lacks the glyphs; toggles keep the check; per menu, `PopupItem` unchanged, `Check` stays the default; ring and dot sizes in `PopupMenuTheme`, colours defaulting to the label's (no accent); layout and input unchanged; additive (0.10.7, after the toggles and columns); asked by flankr's subagents plan and approved by the owner, being built. |
-| [Scrollbar, sectioned content and bookmarks](docs/design/20261028_08_SCROLLBAR_PLAN.md) | 2026-10-28 | In implementation | flankr's agent-view scrollbar as a call-driven `Scrollbar` (4 px thumb, at least 24, 4 px slop, a band that grabs even when invisible, drag scrubs with no fling; `None`/`OnScroll` (2 s hold, 300 ms fade)/`Always`; bookmarks drawn while held as translucent pills, nearest brighter, crowded ones giving way), on a pane by `ScrollPane::with_scrollbar` or standalone; sectioned content drawn by the caller's `render_section(id) -> DrawList` only near the window and cached per `SectionId`, with section anchoring and `scroll_to_section`; bookmarks by `add_bookmark(id, BookmarkText)` (replaces) and `remove_bookmark`, section boundaries not being bookmarks; theme per 8.5 (`ControlTheme::scrollbar`); additive; asked by the owner for flankr's file preview and approved; the scrollbar, its bookmarks from an index of sections and the pane (steps 1-5, 8) are built as 0.10.4, and sections drawn by the pane (steps 6-7) wait for libmsdf's scoped append. |
+| [Scrollbar, sectioned content and bookmarks](docs/design/20261028_08_SCROLLBAR_PLAN.md) | 2026-10-28 | In implementation | flankr's agent-view scrollbar as a call-driven `Scrollbar` (4 px thumb, at least 24, 4 px slop, a band that grabs even when invisible, drag scrubs with no fling; `None`/`OnScroll` (2 s hold, 300 ms fade)/`Always`; bookmarks drawn while held as translucent pills, nearest brighter, crowded ones giving way), on a pane by `ScrollPane::with_scrollbar` or standalone; sectioned content drawn by the caller's `render_section(id) -> DrawList` only near the window and cached per `SectionId`, with section anchoring and `scroll_to_section`; bookmarks by `add_bookmark(id, BookmarkText)` (replaces) and `remove_bookmark`, section boundaries not being bookmarks; theme per 8.5 (`ControlTheme::scrollbar`); additive; asked by the owner for flankr's file preview and approved; the scrollbar, its bookmarks from an index of sections and the pane (steps 1-5, 8) are built as 0.10.4, and sections drawn by the pane (steps 6-7) as 0.10.8 on libmsdf 0.6.1's scoped append. |
 | [MarkdownView, basic Markdown behind a feature](docs/design/20261028_09_MARKDOWN_VIEW_PLAN.md) | 2026-10-28 | Implemented | flankr-markdown's layout and the app's `MarkdownView` moved into a `markdown` module, basic formatting only, measured by libcontrols' own faces (no callback), links by index, themed per 8.5 (`ControlTheme::markdown`, unconditional); feature `markdown` with a minimal parser (paragraphs, bold, italic, code, escapes, bare links) and feature `cmark` adding pulldown-cmark 0.13 for CommonMark blocks, none by default; `parse_inline` draws `BookmarkText::Markdown` pills; additive (0.10.5); approved by the owner, built after the Scrollbar. |
 | [PopupMenu toggle items and columns](docs/design/20261028_10_POPUP_MENU_TOGGLES_AND_COLUMNS_PLAN.md) | 2026-10-28 | Implemented | `PopupItemKind::Toggle` (`PopupItem::toggle`) flips its `checked` in place, keeps the menu open and the highlight, and queues `Toggled { id, checked }` instead of `Chosen`; rows may carry cells (`PopupRow` of an item and `PopupCell`s: text, `TextAlign`, `Auto`/`Fixed`/`Flex` width, dim, a size scale) drawn in columns shared across the menu, cut with …, centred on the row, opened with `open_rows` so `PopupItem` is unchanged; `column_gap` and `dim_text_color` in the theme; additive (0.10.6, after MarkdownView's 0.10.5); asked by flankr's bottom bar and plugin plans and approved by the owner, being built as 0.10.6 on 0.10.5. |
