@@ -435,3 +435,24 @@ Departures needed to make the plan work (plan steps 2-4):
    decision 6).
 8. Added beyond the plan's list: `MarkdownResolved::default()` and its
    `*_in(&ControlTheme)` colour and size helpers, `MarkdownMeasure::px`.
+
+## 2026-10-28 23:52 EDT — PopupMenu toggle items and columns (plan 20261028_10_POPUP_MENU_TOGGLES_AND_COLUMNS_PLAN)
+
+New work: toggle items that keep the menu open, asked by flankr's bottom
+bar plan (~/src/flankr/docs/design/20261028_06_BOTTOM_BAR_UPDATE_PLAN.md,
+decision 3) for its volume menu, and cells in shared columns, asked by
+flankr's plugin plan (~/src/flankr/docs/design/20261028_04_PLUGINS_PLAN.md,
+its 23:14-23:16 EDT amendments) for its plan table. Plan
+docs/design/20261028_10_POPUP_MENU_TOGGLES_AND_COLUMNS_PLAN.md;
+additive, 0.10.6 (tag `v0.10.6`, 97c2804).
+
+Departures from the plan (Rule 1.7):
+
+1. Step 3: the cells' drawing is tested by unit tests in
+   `src/popup_menu.rs`, not router tests: without a shaper or atlas,
+   `DrawContext::draw_text` pushes nothing into the `DrawList`, so a router
+   test cannot see a cell's text, pen, size or colour. `draw` takes each
+   cell from a private `cell_runs` helper, which the unit tests check.
+2. Decisions 1 and 3: any toggle, including one whose `checked` is `None`,
+   reserves the check column, so a `None` toggle's first flip does not
+   widen the menu. Menus with no toggles lay out as before.
