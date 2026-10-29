@@ -1,7 +1,7 @@
 ---
 title: MarkdownView, basic Markdown behind a feature
 date: 2026-10-28
-status: In implementation
+status: Implemented
 covers: >
   A `markdown` module in libcontrols: flankr's Markdown layout
   (flankr-markdown's `lay_out`) and its `MarkdownView` control moved here,
@@ -556,3 +556,10 @@ already in, so step 4's `ScrollbarState::set_faces` and the Markdown
 bookmark drawing (Scrollbar plan, decision 6) are built here, with the
 Scrollbar theme's `bookmark_code_pad` and `bookmark_code_radius`.
 Departures are recorded in `CHANGES.md`.
+
+## Amendment — 2026-10-28 23:44 EDT: implemented
+
+Every step is done and its **Done when:** holds, in 8b1d82e (steps 1-5: the
+features and theme, the model and minimal parser, the cmark parser, the
+view, the pills; the spec, README and 0.10.5, tag `v0.10.5`), with the
+departures recorded in CHANGES.md. Status `Implemented`.
