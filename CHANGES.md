@@ -456,3 +456,25 @@ Departures from the plan (Rule 1.7):
 2. Decisions 1 and 3: any toggle, including one whose `checked` is `None`,
    reserves the check column, so a `None` toggle's first flip does not
    widen the menu. Menus with no toggles lay out as before.
+
+## 2026-10-28 23:56 EDT — PopupMenu radio marks (plan 20261028_07_POPUP_MENU_RADIO_PLAN)
+
+New work: a radio style for the `PopupMenu`'s mark column, asked of
+libcontrols by flankr's subagents plan
+(~/src/flankr/docs/design/20261023_07_SUBAGENTS_PLAN.md, its 20:51 EDT
+amendment, items 2 and 4) for its subagents dropdown, owner's words "the
+empty dot is the menu icon then the dot is used as a radio selector in
+the menu", no colour. Plan docs/design/20261028_07_POPUP_MENU_RADIO_PLAN.md;
+additive, 0.10.7 (tag `v0.10.7`, d35e2fa), after 0.10.6's toggles and columns;
+toggle items keep the check mark in either style (the plan's 23:49 EDT
+amendment).
+
+Departures from the plan (Rule 1.7):
+
+1. Decision 4 and the 23:49 EDT amendment: radio marks are drawn for
+   `Action` items only, as that amendment says. A heading with a check
+   state draws the check as before in either style (decision 4 had named
+   the heading colour for one); toggles always draw the check.
+2. Step 2: two tests beyond the list: a dot radius larger than the ring
+   is clamped to `R - t`, and rows with cells put their radio marks in
+   the same mark column, left of the first column of cells.
