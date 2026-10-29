@@ -73,6 +73,9 @@ pub(crate) struct Inner {
     pending: Option<f32>,
     events: Vec<ScrollbarEvent>,
     pub(crate) sections: Option<Arc<SectionedContent>>,
+    /// The faces Markdown bookmarks are drawn in, when given.
+    #[cfg(feature = "markdown")]
+    pub(crate) faces: Option<Arc<crate::markdown::MarkdownFaces>>,
 }
 
 impl Default for Inner {
@@ -93,6 +96,8 @@ impl Default for Inner {
             pending: None,
             events: Vec::new(),
             sections: None,
+            #[cfg(feature = "markdown")]
+            faces: None,
         }
     }
 }
@@ -345,6 +350,13 @@ impl ScrollbarState {
     /// length it is fed), or take them away.
     pub fn set_sections(&self, sections: Option<Arc<SectionedContent>>) {
         self.with(|s| s.sections = sections);
+    }
+
+    /// Draw `BookmarkText::Markdown` bookmarks' bold, italic and code in
+    /// `faces`, or (`None`) every span in the context's face.
+    #[cfg(feature = "markdown")]
+    pub fn set_faces(&self, faces: Option<Arc<crate::markdown::MarkdownFaces>>) {
+        self.with(|s| s.faces = faces);
     }
 
     /// The standalone feed: the scroller's offset, its content's length and

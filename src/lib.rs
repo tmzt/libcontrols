@@ -14,6 +14,8 @@ pub mod filter;
 pub mod flags;
 pub mod handle;
 pub mod label;
+#[cfg(feature = "markdown")]
+pub mod markdown;
 pub mod modal;
 pub mod options;
 pub mod panel;
@@ -56,6 +58,13 @@ pub use filter::{FilterContext, FilterStack, Filtered, InputFilter};
 pub use flags::{NodeFlags, NodeState};
 pub use handle::{ControlHandle, ReadValue};
 pub use label::{Label, LabelState};
+#[cfg(feature = "markdown")]
+pub use markdown::{
+    CodeFace, Face, MarkdownFaces, MarkdownMeasure, MarkdownView, MdBlock, MdDocument, MdLaid,
+    MdLine, MdRun, MdStyle, lay_out, parse, parse_inline,
+};
+#[cfg(feature = "cmark")]
+pub use markdown::{DEFAULT_MARKDOWN_THRESHOLD_PCT, MarkdownScore, is_markdown, score_markdown};
 pub use modal::{
     Backdrop, ContentReveal, DismissOn, DismissReason, LayerContext, LayerFilter, LayerMask,
     LayerShape, LayerView, Modal, ModalDialog, ModalEntryView, ModalError, ModalEvent, ModalFrame,
@@ -83,7 +92,7 @@ pub use slider::{Slider, SliderState, ThumbStyle};
 pub use slider_numeric::{NumericFormat, SliderNumeric, SliderNumericActive, SliderNumericState};
 pub use symbol::Symbol;
 pub use text_area::{TextArea, TextAreaState};
-pub use theme::{ControlTheme, ScrollTheme};
+pub use theme::{ControlTheme, MarkdownOptions, MarkdownResolved, MarkdownTheme, ScrollTheme};
 pub use tooltip::{LABEL_SEPARATOR, TooltipStyle, draw_tooltip, split_label};
 pub use traits::{DrawContext, DrawControl};
 

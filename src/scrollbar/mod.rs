@@ -83,10 +83,10 @@ pub struct ScrollbarTheme {
     pub bookmark_side_margin: f32,
     /// The least space between two pills shown together.
     pub bookmark_gap: f32,
-    /// Reserved for inline-Markdown code spans (the Markdown view plan);
-    /// unused in this release.
+    /// A Markdown bookmark's code chip's padding either side, drawn without
+    /// faces (the `markdown` feature; unused without it).
     pub bookmark_code_pad: f32,
-    /// Reserved for inline-Markdown code spans; unused in this release.
+    /// That chip's corner radius.
     pub bookmark_code_radius: f32,
 }
 
@@ -303,6 +303,8 @@ pub(crate) fn draw_bar(
     state: &ScrollbarState,
     clip: Option<Rect>,
 ) {
+    #[cfg(feature = "markdown")]
+    let faces = state.with(|s| s.faces.clone());
     let (thumb, alpha, r, pills, fade) = state.with(|s| {
         let pills = pills_of(s, ctx);
         (s.thumb(), s.alpha(), s.resolved, pills, s.bookmarks_alpha())
@@ -326,7 +328,15 @@ pub(crate) fn draw_bar(
     if let Some(c) = clip {
         list.push_clip(c.pos(), c.size());
     }
-    bookmarks::draw(list, ctx, &r, &pills, fade);
+    bookmarks::draw(
+        list,
+        ctx,
+        &r,
+        &pills,
+        fade,
+        #[cfg(feature = "markdown")]
+        faces.as_deref(),
+    );
     if clip.is_some() {
         list.push_clip_end();
     }
@@ -341,13 +351,19 @@ fn pills_of(s: &state::Inner, ctx: &DrawContext) -> Vec<BookmarkPill> {
         return Vec::new();
     };
     let r = s.resolved;
+    let m = bookmarks::PillMeasure::new(
+        ctx,
+        &r,
+        #[cfg(feature = "markdown")]
+        s.faces.as_deref(),
+    );
     bookmarks::layout(
         s.track,
         &r,
         s.content,
         thumb.y + thumb.h * 0.5,
         sections.placed_bookmarks(),
-        |t| ctx.text_advance(t, r.bookmark_font_size),
+        &m,
     )
 }
 

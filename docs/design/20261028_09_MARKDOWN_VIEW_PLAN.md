@@ -1,7 +1,7 @@
 ---
 title: MarkdownView, basic Markdown behind a feature
 date: 2026-10-28
-status: Draft
+status: In implementation
 covers: >
   A `markdown` module in libcontrols: flankr's Markdown layout
   (flankr-markdown's `lay_out`) and its `MarkdownView` control moved here,
@@ -543,3 +543,16 @@ measuring at construction as the app does, the minimal parser limited to
 paragraphs, emphasis, code, escapes and bare links, and the detection
 functions moved with the parser. The status stays `Draft` until the
 first implementing commit (Rule 1.5).
+
+## Amendment — 2026-10-28 23:40 EDT: implementation started; the document is now immutable
+
+Implementation starts with this amendment, in the worktree
+`.claude/worktrees/markdown` on the branch `wt-markdown` from `7f82af4`
+(0.10.4, with the Scrollbar): `status` is `In implementation`, and the
+body above is frozen (AGENTS.md Rule 1.5). The scope is every step, 1-5,
+released as **0.10.5** as the 23:13 EDT amendment says; where the body
+says 0.10.6 or `v0.10.6`, read 0.10.5 and `v0.10.5`. The Scrollbar is
+already in, so step 4's `ScrollbarState::set_faces` and the Markdown
+bookmark drawing (Scrollbar plan, decision 6) are built here, with the
+Scrollbar theme's `bookmark_code_pad` and `bookmark_code_radius`.
+Departures are recorded in `CHANGES.md`.

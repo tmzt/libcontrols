@@ -219,18 +219,50 @@ track, centred across it. The pill nearest the thumb is brighter, and
 crowded pills give way to the nearest one. A `SectionedContent` is an
 index of sections: each has a stable `SectionId` and a height, and
 bookmarks are added on a section's id (`add_bookmark` replaces,
-`remove_bookmark`). `BookmarkText::Markdown` is drawn as written for now.
+`remove_bookmark`). `BookmarkText::Markdown` is drawn as written, or as
+inline spans with the `markdown` feature (below).
 A standalone `Scrollbar` node over a scroller the app drives itself is fed
 with `ScrollbarState::set_metrics` and `set_scrolling`, and reports
 `ScrollbarEvent::Grabbed`, `Scrub` and `Released` (with the section and
 nearest bookmark) through `take_events`. Its numbers are
 `ControlTheme::scrollbar`, overridden per scrollbar by `ScrollbarOptions`.
 
+## Markdown
+
+Two cargo features, none on by default, add basic Markdown. `markdown`
+builds the `markdown` module with libcontrols' own minimal parser and no
+new dependency: paragraphs, bold, italic, code spans, backslash escapes and
+bare `http(s)://` links; block syntax (`# Title`, list lines) shows as
+written. `cmark` adds pulldown-cmark 0.13 (CommonMark, no GFM) for
+headings, lists, code blocks, quotes and `[text](url)` links, with HTML
+shown as its text and images as their alt text linked to their URL, plus
+`score_markdown` and `is_markdown`.
+
+```rust
+let view = MarkdownView::new(md, [x, y], width, MarkdownOptions::default())
+    .with_faces(faces.clone()); // Regular, Bold, Italic and the terminal face
+let id = router.add(None, view);
+// A tap on link i answers ControlAction::Activated { part: ControlPart::Custom(i) }.
+```
+
+`MarkdownView` lays out when built and at `set_text` and `set_width`,
+measured by its `MarkdownFaces` or, without them, at 0.55 a character. It
+draws links in the accent colour and underlined, quotes in the muted
+colour. Its numbers are `ControlTheme::markdown`, overridden per view by
+`MarkdownOptions` (`centered(true)` centres each line). Without a view,
+`parse` and `lay_out` with a `MarkdownMeasure` give the wrapped lines.
+With `markdown`, a scrollbar draws `BookmarkText::Markdown` pills through
+`parse_inline` (the same in both builds): the markers gone, bold, italic
+and code in the faces given by `ScrollbarState::set_faces`, or without
+faces bold brighter and code over a chip.
+
 ## Building
 
 ```bash
 cargo build
 cargo test
+cargo test --features markdown
+cargo test --features cmark
 ```
 
 ## License
@@ -259,4 +291,4 @@ MIT License. See LICENSE file for details.
 | [PopupMenu, a call-driven popup menu of actions](docs/design/20261028_06_POPUP_MENU_PLAN.md) | 2026-10-28 | In implementation | A `PopupMenu` anchored to a rect (an app's ⋮), opened and closed by calls on its shared `PopupMenuState` with no gestures of its own, shown as a backdrop-free layer of the modal stack (attached once with `Router::attach_popup_menu`) so an outside tap, Escape or Back dismisses it; actions, headings and separators with an enabled flag and a check; opens below and right-aligned, flipping above or shifting to fit; pointer and Up/Down/Enter keys; `Chosen(id)`/`Dismissed` events; theme per 8.5 (`ControlTheme::popup_menu`); additive (0.10.3); asked by flankr's plugin plan and approved with it, being built. |
 | [A radio style for PopupMenu's mark column](docs/design/20261028_07_POPUP_MENU_RADIO_PLAN.md) | 2026-10-28 | Draft | `PopupMenuOptions::marks(PopupMarkStyle::Radio)` draws each item's `checked` as a ring with a filled dot (⦿, `Some(true)`) or a small dot (⊙, `Some(false)`) from `Outline` and `Circle` primitives, since Roboto lacks the glyphs; per menu, `PopupItem` unchanged, `Check` stays the default; ring and dot sizes in `PopupMenuTheme`, colours defaulting to the label's (no accent); layout and input unchanged; additive (0.10.4); asked by flankr's subagents plan, drafted for the owner's review. |
 | [Scrollbar, sectioned content and bookmarks](docs/design/20261028_08_SCROLLBAR_PLAN.md) | 2026-10-28 | In implementation | flankr's agent-view scrollbar as a call-driven `Scrollbar` (4 px thumb, at least 24, 4 px slop, a band that grabs even when invisible, drag scrubs with no fling; `None`/`OnScroll` (2 s hold, 300 ms fade)/`Always`; bookmarks drawn while held as translucent pills, nearest brighter, crowded ones giving way), on a pane by `ScrollPane::with_scrollbar` or standalone; sectioned content drawn by the caller's `render_section(id) -> DrawList` only near the window and cached per `SectionId`, with section anchoring and `scroll_to_section`; bookmarks by `add_bookmark(id, BookmarkText)` (replaces) and `remove_bookmark`, section boundaries not being bookmarks; theme per 8.5 (`ControlTheme::scrollbar`); additive; asked by the owner for flankr's file preview and approved; the scrollbar, its bookmarks from an index of sections and the pane (steps 1-5, 8) are built as 0.10.4, and sections drawn by the pane (steps 6-7) wait for libmsdf's scoped append. |
-| [MarkdownView, basic Markdown behind a feature](docs/design/20261028_09_MARKDOWN_VIEW_PLAN.md) | 2026-10-28 | Draft | flankr-markdown's layout and the app's `MarkdownView` moved into a `markdown` module, basic formatting only, measured by libcontrols' own faces (no callback), links by index, themed per 8.5 (`ControlTheme::markdown`, unconditional); feature `markdown` with a minimal parser (paragraphs, bold, italic, code, bare links) and feature `cmark` adding pulldown-cmark 0.13 for CommonMark blocks, none by default; `parse_inline` for `BookmarkText::Markdown` pills; additive (0.10.6); asked by the owner, drafted for the owner's review. |
+| [MarkdownView, basic Markdown behind a feature](docs/design/20261028_09_MARKDOWN_VIEW_PLAN.md) | 2026-10-28 | In implementation | flankr-markdown's layout and the app's `MarkdownView` moved into a `markdown` module, basic formatting only, measured by libcontrols' own faces (no callback), links by index, themed per 8.5 (`ControlTheme::markdown`, unconditional); feature `markdown` with a minimal parser (paragraphs, bold, italic, code, escapes, bare links) and feature `cmark` adding pulldown-cmark 0.13 for CommonMark blocks, none by default; `parse_inline` draws `BookmarkText::Markdown` pills; additive (0.10.5); approved by the owner, built after the Scrollbar. |

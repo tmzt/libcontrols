@@ -366,3 +366,30 @@ before. Sections drawn by a pane wait for a later release.
   `add_bookmark`, `remove_bookmark`, `clear_bookmarks`, `bookmarks`).
 - Added: `ScrollPane::with_scrollbar`, `ScrollPane::scrollbar`;
   `ScrollState::content_length`.
+
+## 0.10.5 — 2026-10-28 (tag `v0.10.5`)
+
+Markdown (docs/design/20261028_09_MARKDOWN_VIEW_PLAN.md). Additive: two
+new features, none on by default, a new optional dependency, a new module,
+new theme types and `ControlTheme::markdown` appended (additive by the
+owner's ruling: a caller builds a theme with `..ControlTheme::default()`).
+A build without the features is 0.10.4's apart from the theme types.
+
+- Added: features `markdown` and `cmark` (pulldown-cmark 0.13, default
+  features off, optional).
+- Added (`markdown`): `markdown`: `parse`, `parse_inline`, `lay_out`,
+  `MarkdownMeasure` (`new`, `px`, `width`), `MdStyle`, `MdRun` (`new`),
+  `MdBlock`, `MdDocument`, `MdLine`, `MdLaid`, `MarkdownFaces`
+  (`metrics`), `Face`, `CodeFace`, `MarkdownView` (`new`, `with_faces`,
+  `set_text`, `set_width`, `height`, `rect`, `px`, `source`, `text`,
+  `links`, `move_to`, `center`, `link_at`, `link_rect`; `DrawControl`,
+  `HostedControl`); `ScrollbarState::set_faces`.
+- Added (`markdown`): a `BookmarkText::Markdown` bookmark is drawn as
+  inline spans, its markers gone (the Scrollbar plan's decision 6);
+  without the feature it is drawn as written, as in 0.10.4.
+- Added (`cmark`): `score_markdown`, `is_markdown`, `MarkdownScore`,
+  `DEFAULT_MARKDOWN_THRESHOLD_PCT`.
+- Added: `MarkdownTheme`, `MarkdownOptions` (a setter per value,
+  `centered`, `with_theme`), `MarkdownResolved` (`font_size_in`,
+  `text_color_in`, `link_color_in`, `dim_color_in`, `code_color_in`);
+  `ControlTheme::markdown`.

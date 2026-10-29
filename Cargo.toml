@@ -1,15 +1,24 @@
 [package]
 name = "libcontrols"
-version = "0.10.4"
+version = "0.10.5"
 edition = "2024"
 license = "MIT"
 description = "UI controls (labels, buttons, sliders, radios, option grids, panels, dialogs) drawn as MSDF primitives and owned by a persistent router"
 repository = "https://github.com/tmzt/libcontrols"
 
+[features]
+# The `markdown` module with libcontrols' minimal parser (paragraphs, bold,
+# italic, code, bare links); no new dependency
+# (docs/design/20261028_09_MARKDOWN_VIEW_PLAN.md, decision 1).
+markdown = []
+# `markdown` with pulldown-cmark for CommonMark blocks (no GFM).
+cmark = ["markdown", "dep:pulldown-cmark"]
+
 [dependencies]
 libmsdf = { git = "https://github.com/tmzt/libmsdf", rev = "4de319ce57aea99297de0a805b899276dd90b411" }
 wgpu = "30.0.1"
 bytemuck = { version = "1", features = ["derive"] }
+pulldown-cmark = { version = "0.13", default-features = false, optional = true }
 
 [dev-dependencies]
 naga = { version = "30.0.1", features = ["wgsl-in"] }

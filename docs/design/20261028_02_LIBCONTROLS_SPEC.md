@@ -923,3 +923,100 @@ section 3 is unchanged.
    `#[non_exhaustive]`.
 7. **11:** `src/scrollbar/` and `src/sections.rs` add 11 unit tests, and
    `tests/scrollbar.rs` adds 21 router tests.
+
+## Amendment — 2026-10-28 23:41 EDT: Markdown, behind the `markdown` and `cmark` features (sections 3, 6, 8, 10, 11)
+
+Plan `docs/design/20261028_09_MARKDOWN_VIEW_PLAN.md`, release 0.10.5
+(`v0.10.5`); the commit is the one that adds `src/markdown/`. This adds
+section 6.19 and extends 3, 6.17, 8, 10 and 11; it replaces no earlier
+text except the version in 10, the test counts in 11, and, in the
+23:26 EDT amendment, "`BookmarkText::Markdown` is drawn as written" (its
+item 3) and "which nothing reads yet" of `bookmark_code_pad` and
+`bookmark_code_radius` (its item 5), which now hold only without the
+`markdown` feature.
+
+1. **3:** two cargo features, none on by default: `markdown` (the
+   `markdown` module, no new dependency) and `cmark` (`markdown` plus
+   pulldown-cmark 0.13, default features off, optional). The theme types
+   and the Scrollbar are built in every configuration. If any crate in a
+   build turns `cmark` on, every `parse` and `MarkdownView` in it uses
+   CommonMark.
+2. **6.19 Markdown (`src/markdown/`, `markdown`):** `parse(md) ->
+   MdDocument` (without `cmark` the minimal parser: paragraphs split at
+   blank lines, single newlines as spaces, `***x***` bold italic, `**x**`
+   and `__x__` bold, `*x*` and `_x_` italic by CommonMark's flanking rules
+   (an `_` inside a word is literal), code spans with nothing formatted
+   inside, escapes of ``\ * _ ` ``, bare `http(s)://` URLs as links trimmed
+   of trailing punctuation, everything else literal; with `cmark`
+   CommonMark with no extensions: headings bold, quotes dim and indented
+   `quote_indent_chars` spaces a level, code blocks in `Code` keeping
+   their lines, list items "• " or "N. " with a hanging indent, HTML
+   literal, images as their alt text linked to their URL, links and bare
+   URLs in order); `parse_inline(text) -> Vec<MdRun>` (the minimal
+   parser's inline pass in both builds, newlines as spaces, URLs plain);
+   the model `MdStyle` (`Regular`, `Bold`, `Italic`, `BoldItalic`,
+   `Code`), `MdRun` (`text`, `style`, `link`, `dim`; `new`), `MdBlock`
+   (`runs`, `list_depth`, `outer_markers`, `quote`, `marker`, `pre`,
+   `gap`; a `'\n'` in a run is a hard break), `MdDocument` (`blocks`,
+   `links`), `MdLine` (`runs`, `indent`, `gap_before`), `MdLaid`
+   (`lines`, `links`); `MarkdownMeasure::new(faces, px, &MarkdownResolved)`
+   with `px` and `width(text, style)` (with faces each face's shaper, code
+   the terminal face's cell a character; without, 0.55 a character and
+   code `code_cell_em`); `lay_out(doc, width, &measure) -> MdLaid` (words
+   wrap at spaces, a word wider than the line breaks by character);
+   `MarkdownFaces` (`regular`, `bold`, `italic` as `Face { id, atlas,
+   shaper }`, `code` as `CodeFace { shaper, text, symbols }`, `px_range`;
+   `metrics`; `BoldItalic` in `bold`); and `MarkdownView`: `new(md,
+   origin, width, options)`, `with_faces`, `set_text`, `set_width`,
+   `height`, `rect`, `px`, `source`, `text`, `links`, `move_to`, `center`,
+   `link_at`, `link_rect`. It parses and lays out at construction and at
+   `with_faces`, `set_text` and `set_width`, with the `markdown` theme and
+   default font size of `ControlTheme::default()` until first drawn, then
+   of the theme it was last drawn with; lines are `px * line_height`
+   apart, a line's gap times that above it. It draws each run in its face
+   (without faces, `DrawContext::draw_text`), links in the link colour
+   with an underline box `max(px * underline_thickness, 1)` thick whose
+   bottom is at `underline_at` of the line, quotes in the dim colour, code
+   in the code colour, prose in the text colour, all resolved against the
+   theme it is drawn with. A link's tap area is its run, from
+   `link_tap_above` of a line above it, `link_tap_height` lines tall. It
+   hit-tests its rect (`Body`); a left `Click` on a link answers
+   `Activated { part: Custom(index) }`, anything else nothing, and it
+   takes no keys. With `cmark`: `score_markdown`, `is_markdown`,
+   `MarkdownScore` and `DEFAULT_MARKDOWN_THRESHOLD_PCT` (15.0), moved from
+   flankr-markdown unchanged.
+3. **6.17, with `markdown`:** `ScrollbarState::set_faces(Option<Arc<
+   MarkdownFaces>>)`. A `BookmarkText::Markdown` bookmark's first line goes
+   through `parse_inline` and is drawn as spans, the markers gone, the cut
+   to fit counting the visible text (`BookmarkPill::text` is that text).
+   With faces, bold, italic and code are drawn and measured in them.
+   Without, every span is in the context's face: bold and bold italic at
+   `bookmark_near_text_alpha` (times the colour and the fade) instead of
+   the pill's text alpha, italic as regular, and code over a rounded chip
+   of radius `bookmark_code_radius` in the pill's background colour, the
+   line's height and `bookmark_code_pad` wider either side (counted in the
+   pill's width). Without the feature a `Markdown` bookmark is drawn as
+   written.
+4. **8, theme:** `ControlTheme::markdown: MarkdownTheme` (`text_color`
+   `None` = `text_color`, `link_color` `None` = `accent_color`,
+   `dim_color` `None` = `muted_text_color`, `code_color` `None` = the text
+   colour, `font_size` `None` = `default_font_size`, `line_height` 1.35,
+   `block_gap` 0.5, `item_gap` 0.15, `quote_indent_chars` 4,
+   `underline_thickness` 0.07, `underline_at` 0.92, `link_tap_above`
+   0.15, `link_tap_height` 1.3, `code_cell_em` 0.6), overridden per view
+   by `MarkdownOptions` (one setter per value, plus the per-instance
+   `centered`, which centres each line at every layout) and resolved by
+   `with_theme` into `MarkdownResolved`, whose colours and size stay
+   `Option` and are read against a `ControlTheme` with `font_size_in`,
+   `text_color_in`, `link_color_in`, `dim_color_in` and `code_color_in`:
+   built to section 8.5's standard, in every configuration.
+5. **10:** the crate is 0.10.5. `MdStyle`, `MdRun`, `MdBlock`,
+   `MdDocument`, `MdLine`, `MdLaid`, `MarkdownTheme`, `MarkdownOptions`
+   and `MarkdownResolved` are `#[non_exhaustive]`.
+6. **11:** `src/theme.rs` adds 1 unit test in every build; with
+   `markdown`, `src/markdown/` and `src/scrollbar/` add 14 more, and with
+   `cmark` 17 more again. `tests/markdown.rs` adds 11 router tests in
+   either build (10 shared and one for the parser built), and
+   `tests/scrollbar.rs`'s test of a Markdown bookmark drawn as written
+   runs only without `markdown`. The crate is tested with no features,
+   `--features markdown` and `--features cmark`.

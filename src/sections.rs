@@ -52,13 +52,14 @@ impl Section {
 pub enum BookmarkText {
     /// Plain text.
     Text(String),
-    /// Inline Markdown. Drawn as plain text, exactly as written, in this
-    /// release (the plan's decision 6, without the `markdown` feature).
+    /// Inline Markdown (bold, italic, code). With the `markdown` feature it
+    /// is drawn as spans, its markers gone; without it, as plain text,
+    /// exactly as written (the Scrollbar plan's decision 6).
     Markdown(String),
 }
 
 impl BookmarkText {
-    /// The text as drawn: in this release, the string as written.
+    /// The string as written.
     pub(crate) fn plain(&self) -> &str {
         match self {
             Self::Text(s) | Self::Markdown(s) => s,
@@ -256,12 +257,12 @@ impl SectionedContent {
     }
 
     /// The bookmarks whose section exists, with that section's top.
-    pub(crate) fn placed_bookmarks(&self) -> Vec<(SectionId, f32, String)> {
+    pub(crate) fn placed_bookmarks(&self) -> Vec<(SectionId, f32, BookmarkText)> {
         self.with(|s| {
-            let mut v: Vec<(SectionId, f32, String)> = s
+            let mut v: Vec<(SectionId, f32, BookmarkText)> = s
                 .bookmarks
                 .iter()
-                .filter_map(|(&id, t)| s.offset_of(id).map(|top| (id, top, t.plain().to_owned())))
+                .filter_map(|(&id, t)| s.offset_of(id).map(|top| (id, top, t.clone())))
                 .collect();
             v.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
             v

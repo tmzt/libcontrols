@@ -306,6 +306,8 @@ fn a_long_bookmark_is_cut_to_the_width_less_72() {
     assert!(pill.rect.w <= 400.0 - 48.0);
 }
 
+/// Without the `markdown` feature (with it, tests/markdown.rs).
+#[cfg(not(feature = "markdown"))]
 #[test]
 fn a_markdown_bookmark_is_drawn_as_written() {
     let c = ten();
