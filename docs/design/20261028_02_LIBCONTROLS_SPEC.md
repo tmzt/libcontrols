@@ -755,3 +755,75 @@ earlier text except the version in section 10 and the test counts in 11.
    `EditableLabelTheme`, `EditableLabelOptions`, `EditableLabelResolved`
    and `EditableLabelParts` are `#[non_exhaustive]`.
 4. **11:** `tests/editable_label.rs` adds 13 router tests.
+
+## Amendment — 2026-10-28 19:58 EDT: PopupMenu (sections 4.6, 6, 8, 10, 11)
+
+Plan `docs/design/20261028_06_POPUP_MENU_PLAN.md`, release 0.10.3
+(`v0.10.3`); the commit is the one that adds `src/popup_menu.rs`. This
+adds section 6.16 and extends sections 4.6, 8, 10 and 11; it replaces no
+earlier text except the version in section 10 and the test counts in 11.
+
+1. **4.6, the modal stack:** `ModalStack` also keeps **attached** modals
+   (a private list of an entry id and a function making the modal). When
+   `sync` finds a live entry with no layer and no queued push for it, it
+   makes the layer from the attached modal of that id. An entry pushed on
+   the `ModalState` alone therefore gets a layer at the stack's next
+   routed event or draw. The only way in is `Router::attach_popup_menu`;
+   no public modal type changed.
+2. **6.16 `PopupMenu` (`src/popup_menu.rs`).** A menu of actions anchored
+   to a rect, opened and closed by calls on its shared `PopupMenuState`
+   (`open(anchor, items)`, which replaces the items while open; `close`;
+   `is_open`; `take_events`; `anchor`, `items`, `highlighted`, `layout`),
+   with no gestures of its own. `Router::attach_popup_menu(id, menu)`
+   (`ModalError::NoStack` without a stack; attaching an id again replaces
+   the menu for the next open) binds the state to the stack's
+   `ModalState`; `open` then pushes entry `id` with
+   `ModalTransition::Instant` and the stack draws a clone of the menu as
+   that entry's layer. The layer has no backdrop and is dismissed by
+   `PopupMenuOptions::dismiss` (`DismissOn`, default all) through the
+   standard `ModalLayerFilter` over the menu's last laid-out frame: an
+   outside tap is consumed (nothing beneath sees it) and dismisses, as do
+   Escape and Back. Items are `PopupItem { id, label, enabled, checked:
+   Option<bool>, kind }` (`PopupItemKind`: `Action`, `Heading`,
+   `Separator`; `action`, `heading`, `separator`, `with_enabled`,
+   `with_checked`, `is_choosable`). `PopupMenuEvent`: `Chosen(Symbol)`
+   (a choice; the menu closes) and `Dismissed` (the entry ended by
+   anything but a choice or `close`, noticed by `is_open` or
+   `take_events`); `close` queues nothing. Placement
+   (`PopupMenu::layout(&DrawContext) -> PopupMenuLayout { frame, items,
+   above }`): width from the widest label plus paddings and the check
+   column, within `min_width..=max_width` and the viewport less
+   `margin`; right-aligned to the anchor and moved inside the viewport;
+   below the anchor by `offset` when it fits, else above when that fits,
+   else on the roomier side, clamped. Each draw stores the layout in the
+   state; hit tests and the layer's shape read it (the default theme
+   before the first draw). Input: `Move`/`Drag` highlight the enabled
+   action under the pointer; `Down` records it as pressed; `Click`
+   chooses it when it is the pressed one or no press was recorded; Up and
+   Down keys move the highlight over enabled actions, wrapping, Home and
+   End to the first and last, Enter and Space choose; the pointer leaving
+   clears the highlight. A choice answers `ControlAction::Activated {
+   part: ControlPart::Custom(index) }`; `hit_test` gives an item as
+   `ControlPart::Custom(index)`. Draw: shadow, background, outline,
+   highlight, labels (headings in the heading colour, disabled actions at
+   `disabled_alpha`), check marks (two `push_line` segments), separators
+   (one line). `item_at`, `resolved`, `with_state`, `with_options`.
+3. **8, theme:** `ControlTheme::popup_menu: PopupMenuTheme` (`bg [0.08,
+   0.11, 0.16, 0.98]`, `border [0.18, 0.65, 0.92, 0.35]`,
+   `border_thickness` 1, `corner_radius` 6, `item_height` 40, `padding` 6,
+   `item_padding` 14, `min_width` 160, `max_width` 320,
+   `separator_height` 9, `separator_thickness` 1, `separator_color [0.30,
+   0.36, 0.44, 0.60]`, `text_color`/`heading_color`/`check_color`/
+   `font_size` `None` = `text_color`/`muted_text_color`/`accent_color`/
+   `default_font_size`, `highlight [0.18, 0.65, 0.92, 0.20]`,
+   `check_width` 24, `check_size` 12, `check_thickness` 1.6,
+   `disabled_alpha` 0.4, `shadow [0, 0, 0, 0.35]`, `shadow_offset` 3,
+   `offset` 4, `margin` 8), overridden per menu by `PopupMenuOptions` (one
+   setter per value, plus the per-instance `dismiss`) and resolved by
+   `with_theme` into `PopupMenuResolved`: built to section 8.5's
+   standard.
+4. **10:** the crate is 0.10.3. `PopupItemKind`, `PopupMenuEvent`,
+   `PopupMenuLayout`, `PopupMenuTheme`, `PopupMenuOptions` and
+   `PopupMenuResolved` are `#[non_exhaustive]`; `PopupItem` is a plain
+   struct with public fields.
+5. **11:** `tests/popup_menu.rs` adds 20 router tests.

@@ -322,3 +322,20 @@ the owner's ruling: a caller builds a theme with `..ControlTheme::default()`).
   (overrides, with `with_theme`), `EditableLabelResolved`,
   `EditableLabelParts`.
 - Added: `ControlTheme::editable_label: EditableLabelTheme`.
+
+## 0.10.3 — 2026-10-28 (tag `v0.10.3`)
+
+PopupMenu (docs/design/20261028_06_POPUP_MENU_PLAN.md). Additive: a new
+module and types, a `Router` method, and a field appended to `ControlTheme`
+(additive by the owner's ruling: a caller builds a theme with
+`..ControlTheme::default()`).
+
+- Added: `popup_menu`: `PopupMenu` (`new`, `with_state`, `with_options`,
+  `resolved`, `layout`, `item_at`; `Modal`), `PopupMenuState` (`open`,
+  `close`, `is_open`, `take_events`, `anchor`, `items`, `highlighted`,
+  `layout`), `PopupItem` (`action`, `heading`, `separator`, `with_enabled`,
+  `with_checked`, `is_choosable`), `PopupItemKind`, `PopupMenuEvent`,
+  `PopupMenuLayout`, `PopupMenuTheme`, `PopupMenuOptions` (overrides and
+  `dismiss`, with `with_theme`), `PopupMenuResolved`.
+- Added: `Router::attach_popup_menu`.
+- Added: `ControlTheme::popup_menu: PopupMenuTheme`.

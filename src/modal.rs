@@ -1275,7 +1275,13 @@ pub struct ModalStack {
     viewport: Rect,
     layers: RefCell<Vec<Layer>>,
     pending: RefCell<Vec<(Symbol, Box<dyn Modal>)>>,
+    /// Modals attached under an entry id, made into a layer whenever that
+    /// entry is pushed on the state alone (a `PopupMenu`'s `open`).
+    attached: RefCell<Vec<(Symbol, AttachedModal)>>,
 }
+
+/// Makes the modal of an attached entry's layer.
+pub(crate) type AttachedModal = Box<dyn Fn() -> Box<dyn Modal>>;
 
 impl ModalStack {
     /// The alias the stack is installed under.
@@ -1293,6 +1299,7 @@ impl ModalStack {
             viewport,
             layers: RefCell::new(Vec::new()),
             pending: RefCell::new(Vec::new()),
+            attached: RefCell::new(Vec::new()),
         };
         router
             .add_reserved(Symbol::intern(Self::NAME), Box::new(stack))
@@ -1336,6 +1343,24 @@ impl ModalStack {
         let layer = layers.iter_mut().rev().find(|l| l.id == id)?;
         let any: &mut dyn Any = layer.modal.as_mut();
         any.downcast_mut::<T>()
+    }
+
+    /// Attach `make` under `id`: whenever an entry `id` is live with no
+    /// layer and no queued push, its layer's modal is `make()`. Attaching
+    /// an id again replaces it.
+    pub(crate) fn attach(&self, id: Symbol, make: AttachedModal) {
+        let mut attached = self.attached.borrow_mut();
+        attached.retain(|(a, _)| *a != id);
+        attached.push((id, make));
+    }
+
+    /// A new modal for the attached entry `id`.
+    fn make_attached(&self, id: Symbol) -> Option<Box<dyn Modal>> {
+        let attached = self.attached.try_borrow().ok()?;
+        attached
+            .iter()
+            .find(|(a, _)| *a == id)
+            .map(|(_, make)| make())
     }
 
     fn make_layer(&self, id: Symbol, serial: u64, modal: Box<dyn Modal>) -> Layer {
@@ -1414,7 +1439,7 @@ impl ModalStack {
                     .position(|(p, _)| *p == id)
                     .map(|i| pending.remove(i).1)
             };
-            if let Some(modal) = queued {
+            if let Some(modal) = queued.or_else(|| self.make_attached(id)) {
                 let layer = self.make_layer(id, serial, modal);
                 let mut layers = self.layers.borrow_mut();
                 let at = live

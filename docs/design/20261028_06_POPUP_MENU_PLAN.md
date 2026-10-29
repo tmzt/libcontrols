@@ -1,7 +1,7 @@
 ---
 title: PopupMenu, a call-driven popup menu of actions
 date: 2026-10-28
-status: Draft
+status: In implementation
 covers: >
   A new control, `PopupMenu`: a small menu of actions anchored to a rect
   (an app's ⋮ button), opened and closed by calls on its shared
@@ -383,3 +383,12 @@ approval. Its one addition to the requested interface,
 `Draft` until the first implementing commit, which sets it to `In
 implementation` and appends the amendment saying the document is now
 immutable.
+
+## Amendment — 2026-10-28 19:54 EDT: implementation started; the document is now immutable
+
+Implementation starts with this amendment, in the worktree
+`.claude/worktrees/popup-menu` on the branch `wt-popup-menu` from
+`0bfd5db`: `status` is `In implementation`, and the body above is frozen
+(AGENTS.md Rule 1.5). The open questions of section 5 stay open for the
+owner; the code follows the decisions as written. Departures are recorded
+in `CHANGES.md`.

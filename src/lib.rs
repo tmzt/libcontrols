@@ -17,6 +17,7 @@ pub mod label;
 pub mod modal;
 pub mod options;
 pub mod panel;
+pub mod popup_menu;
 pub mod radio;
 pub mod rect;
 pub mod ring;
@@ -61,6 +62,10 @@ pub use modal::{
 };
 pub use options::{DEFAULT_PER_ROW, DEFAULT_ROW_GAP, MAX_OPTIONS, Options, OptionsState};
 pub use panel::{Panel, PanelData, PanelState};
+pub use popup_menu::{
+    PopupItem, PopupItemKind, PopupMenu, PopupMenuEvent, PopupMenuLayout, PopupMenuOptions,
+    PopupMenuResolved, PopupMenuState, PopupMenuTheme,
+};
 pub use radio::{DEFAULT_CELL_GAP, DEFAULT_CELL_WIDTH, NO_CELL, Radio, RadioState};
 pub use rect::{Rect, TextAlign};
 pub use ring::{GlowRingStyle, draw_glowing_ring};

@@ -2,6 +2,7 @@
 
 pub use crate::drawer::DrawerTheme;
 pub use crate::editable_label::EditableLabelTheme;
+pub use crate::popup_menu::PopupMenuTheme;
 
 /// Visual theme specifying colors, margins, and geometric styles for UI controls.
 #[derive(Clone, Debug, PartialEq)]
@@ -44,6 +45,9 @@ pub struct ControlTheme {
     /// `EditableLabelOptions` override them
     /// (docs/design/20261028_05_EDITABLE_LABEL_PLAN.md).
     pub editable_label: EditableLabelTheme,
+    /// The defaults every popup menu starts from; its `PopupMenuOptions`
+    /// override them (docs/design/20261028_06_POPUP_MENU_PLAN.md).
+    pub popup_menu: PopupMenuTheme,
 }
 
 /// Scroll pane values (docs/design/20261023_02_SCROLL_PANE_PLAN.md, section
@@ -121,6 +125,7 @@ impl Default for ControlTheme {
             scroll: ScrollTheme::default(),
             drawer: DrawerTheme::default(),
             editable_label: EditableLabelTheme::default(),
+            popup_menu: PopupMenuTheme::default(),
         }
     }
 }
