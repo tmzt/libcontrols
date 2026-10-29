@@ -403,3 +403,35 @@ Departures (Rule 1.7, small):
    `bookmark_code_pad` and `bookmark_code_radius` are unused until
    Markdown bookmarks are drawn; a pane's scrollbar state is not kept
    across rebuilds (no `with_scrollbar_state`).
+
+## 2026-10-28 23:44 EDT — Markdown behind features (plan 20261028_09_MARKDOWN_VIEW_PLAN)
+
+New work: flankr's Markdown layout (flankr-markdown) and its `MarkdownView`
+moved into libcontrols, basic formatting only, behind a `markdown` feature
+with a minimal parser and a `cmark` feature adding pulldown-cmark, at the
+owner's word ("we could move the markdown render as well, if it doesn't
+have heavy callbacks"; "feature based with cmark as a further feature").
+Plan docs/design/20261028_09_MARKDOWN_VIEW_PLAN.md; additive, 0.10.5
+(tag `v0.10.5`, 8b1d82e), built after the Scrollbar, so `BookmarkText::Markdown`
+pills draw through `parse_inline` with `ScrollbarState::set_faces`.
+
+Departures needed to make the plan work (plan steps 2-4):
+1. `MdBlock` gains `outer_markers: Vec<String>` beside `list_depth`: the
+   enclosing items' markers, whose widths are the list indent, so a list
+   nested under "1." hangs as flankr-markdown's does (decision 3).
+2. A hard break is a `'\n'` in a block's run (flankr's `Piece::Break`),
+   since the model has no pieces (decision 3).
+3. `parse` uses the default theme's gaps; the view parses with its
+   resolved `block_gap`/`item_gap` (decisions 7-8).
+4. The view lays out with `ControlTheme::default()` until drawn, then with
+   the last drawn theme's `markdown` and default font size (section 3).
+5. With faces, code is measured by the terminal face's own cell, as the app
+   measured; `code_cell_em` applies without faces (decision 7).
+6. In the minimal parser a fence's joined lines pair as an inline code span
+   (CommonMark's inline rule), so it shows as code, not with its backticks
+   (decision 2).
+7. A Markdown pill parses its first line only ("…" when it has more), and
+   its code chip's padding counts in the pill's width (Scrollbar plan,
+   decision 6).
+8. Added beyond the plan's list: `MarkdownResolved::default()` and its
+   `*_in(&ControlTheme)` colour and size helpers, `MarkdownMeasure::px`.
