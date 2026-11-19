@@ -514,3 +514,14 @@ Departures (Rule 1.7):
    applies to; the shift held back under a held thumb is applied on the
    first update after release; `scroll_to_section` re-records the anchors;
    `set_source` drops every drawing.
+
+## 2026-11-19 18:22 EST — A ribbon of sections, two-finger flings and a label on the scroll thumb (plan 20261119_01_RIBBON_TWO_FINGER_AND_THUMB_LABEL_PLAN)
+
+Planned new work, Draft, asked for by ShotToss (`dev.tmzt.shottoss`) on
+the owner's instruction, with flankr's agent-view ribbon (flankr
+`349ed92`) as the source: placeholder sections and batched edits on
+`SectionedContent`, a window by index for the app's fetching, a pending
+length, a two-finger drag and fling with `TouchTracker` and
+`Router::set_fingers`, flings that land on a section top, and a label on
+the scrollbar thumb while scrolling with optional snapping. Additive, for
+0.11.1. No code until the owner approves the plan.
