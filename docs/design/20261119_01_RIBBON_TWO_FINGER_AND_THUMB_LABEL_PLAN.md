@@ -463,3 +463,406 @@ impl ScrollbarState {
    place of the nearest bookmark's highlight (this plan hides it then).
 3. The placeholder height's default (96 px) is arbitrary; ShotToss will set
    its own (a divider and three rows of tiles).
+
+## Amendment — 2026-11-19 18:31 EST: a customizable fling profile, counted flicks and levelled sections (sections 2, 3, 4.3, 5, 6, 8, 9)
+
+The owner (2026-11-19), relayed by the ShotToss coordinator: "the fling
+should be customizable, with flankr's as a good starting point, adjusted
+to the month-based view"; "the user would get the feel for how many months
+they are skipping, or if they applied just the flick, jump one month";
+"for very large collections the smallest granularity might change to week
+or day"; "two-finger is 4x the one-finger (which is a clear flick gesture
+not a scroll)"; "the pill should be the determined granularity, same as
+the label, it could use a larger pill for month/year combinations (or even
+year past a large number of unloaded months)"; then approval of the proposal (parts A to G) with version
+0.12.0, flankr's fling as the default, and the finest unit where the view
+is as the unit counted.
+
+This amendment replaces:
+
+- section 2, decision 3 (one 5× factor for drag and fling, ShotToss's 4× an
+  override) and decision 5 (additive, 0.11.1); the version in the front
+  matter's `covers` ("Additive: libcontrols 0.11.1") is superseded by
+  item 9 below;
+- in section 4.3: the table of theme values, `ScrollPane::with_two_finger_factor`,
+  the `FlingStop` enum and `ScrollPane::with_fling_stop`, the **Fling** and
+  **Landing on a boundary** bullets, and the sentence "A fling's decay,
+  rest rule and minimum are unchanged";
+- in section 5: the **What it shows**, **When** and **Switching** bullets,
+  for the cases items 6 and 7 below cover, and "while held, all bookmarks
+  show as today" with the nearest-first placement it keeps (item 7's pills
+  replace both);
+- steps 4, 5 and 8 of section 6 (steps 1 and 6 are extended);
+- the first bullet of section 8 ("The fling's feel …"), which is no longer
+  left to a later plan;
+- open question 1 of section 9, now answered.
+
+Everything else stands.
+
+### 1. `FlingProfile`
+
+```rust
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct FlingProfile { /* the fields below, all pub */ }
+impl FlingProfile {
+    pub fn flankr() -> Self;    // the default: flankr 349ed92's values
+    pub fn classic() -> Self;   // libcontrols 0.11.0's pane fling
+    // one builder setter per field, clamping to its bounds
+}
+impl Default for FlingProfile { fn default() -> Self { Self::flankr() } }
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum SpeedFit { Endpoints, WeightedLine { oldest_weight: f32 } }
+```
+
+Units are the router's pixels and seconds, as for `ScrollTheme` (flankr's
+constants are points times its scale; the same numbers at scale 1).
+
+| Field | Unit | `flankr()` (default) | `classic()` | Bounds | Meaning |
+|---|---|---|---|---|---|
+| `speed_window` | s | 0.100 | 0.100 | 0.016–0.5 | the release speed is measured over this span back from the last move |
+| `speed_span_min` | s | 0.016 | 0 | 0–`speed_window` | a shorter span gives no speed |
+| `speed_fit` | `SpeedFit` | `WeightedLine { oldest_weight: 0.5 }` | `Endpoints` | weight 0–1 | flankr's least-squares line weighted 1 (newest) to 0.5 (oldest); 0.11.0's first and last sample |
+| `max_release_speed` | px/s | 8000 | 8000 | > 0 | the measured finger speed's cap |
+| `curve_knee` | px/s | 1000 | 1000 | > 0 | below it a fling follows the finger exactly |
+| `curve_power` | — | 1.5 | 1.0 | 1.0–3.0 | above the knee, `knee · (v / knee)^power` |
+| `max_speed` | px/s | 16000 | 8000 | ≥ `min_speed` | the cap after the curve, the boost and two fingers |
+| `decay` | 1/s | 2.0 | 3.2 | 0.1–20 | the speed falls to `e^-decay` of itself each second |
+| `min_speed` | px/s | 30 | 30 | ≥ 0 | slower, a fling stops or does not start; also the overscroll spring's snap |
+| `rest` | s | 0.100 | 0.100 | 0–1 | a finger still this long before lifting does not fling |
+| `dt_max` | s | 1/30 | 0.1 | 0.001–0.1 | the longest frame a fling advances by |
+| `boost_window` | s | 0.400 | 0 | 0–2 | a gesture lifted within this long of its touch-down, the same way as the fling running at touch-down, adds to it; 0 is off |
+| `boost_factor` | — | 1.0 | 0 | 0–2 | the share of the running fling's speed added (distance flings) |
+| `two_finger_factor` | — | 5.0 | 5.0 | 1–20 | two-finger drag movement and distance-fling speed, times this |
+| `two_finger_lift` | s | 0.100 | 0.100 | 0–0.5 | the fingers count as lifted together within this |
+| `flick_max_duration` | s | 0.200 | 0.200 | 0.05–0.5 | touch-down to the last lift, at most, for a flick |
+| `flick_max_travel` | px | 320 | 320 | 16–2000 | the pointer's movement (the fingers' mean, before any factor), at most, for a flick |
+| `flick_min_speed` | px/s | 600 | 600 | > `min_speed` | the measured release speed, at least, for a flick |
+| `stop` | `FlingStop` | `Free` | `Free` | — | where a fling ends (item 3) |
+
+A distance fling's release: the speed by `speed_fit` over `speed_window`,
+capped at `max_release_speed`; the curve; times `two_finger_factor` for a
+pair lifted within `two_finger_lift`; plus `boost_factor` times the
+running fling under the boost rule; capped at `max_speed`; no fling if
+`rest` passed or the speed is at most `min_speed`. Each tick advances by
+`min(dt, dt_max)` and multiplies the speed by `e^(-decay · dt)`.
+
+### 2. Theme and overrides (spec 8.5)
+
+`ScrollTheme::fling: FlingProfile` is appended, `FlingProfile::flankr()` by
+default. `ScrollTheme`'s `fling_decay`, `min_fling`, `max_fling` and `rest`
+are removed (8.5: a theme does not repeat a value); they are
+`fling.decay`, `fling.min_speed`, `fling.max_release_speed` and
+`fling.rest`, and the 0.11.0 `tick` clamp of `dt` to 0.1 is
+`fling.dt_max`. `FlingOptions` has the same fields as `Option`s with one
+setter each and a `Default` that overrides nothing;
+`FlingOptions::from(FlingProfile)` overrides every field (a whole preset);
+`FlingOptions::with_theme(&self, &FlingProfile) -> FlingProfile` resolves
+them. The resolved type is the profile itself, since its values are plain:
+a departure from 8.5's separate `XResolved`, recorded here. Per pane,
+`ScrollPane::with_fling(FlingOptions)`.
+
+### 3. Where a fling ends: `FlingStop`
+
+```rust
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[non_exhaustive]
+pub enum FlingStop {
+    /// A distance fling, ending where its decay takes it.
+    #[default]
+    Free,
+    /// A distance fling whose end moves to the first boundary at or past
+    /// its natural landing point.
+    #[non_exhaustive]
+    Boundary { boundaries: Boundaries },
+    /// A flick counts boundaries (item 4); any other fling is `Free`.
+    #[non_exhaustive]
+    Count { boundaries: Boundaries, skip: SkipMapping },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Boundaries {
+    /// Every section's top: one unit of the finest level where the view is.
+    #[default]
+    Sections,
+    /// Tops whose level (item 8) is at most n: units of level n everywhere.
+    AtMost(u8),
+    /// Tops of sections that have a bookmark.
+    Bookmarked,
+}
+```
+
+There is no per-finger selector (the proposal's `StopFingers` is not
+built): what counts is the gesture, a flick, with one finger or two, by
+the classifier of item 1. An exact `Level(n)` is not offered, since
+counting months by level 1 alone would skip every January (level 0).
+`Boundary` lands as section 4.3's former landing rule did: the starting
+speed becomes `(target - offset) · decay`, and when that is over
+`max_speed` the target is the last boundary within reach. On a pane
+without sections every stop is `Free`.
+
+### 4. Counted flicks
+
+**The classifier.** On the last lift, the gesture is a flick when its
+time from touch-down to that lift is at most `flick_max_duration`, the
+pointer's travel is at most `flick_max_travel`, the measured release speed
+`v_r` (by `speed_fit`, capped at `max_release_speed`, before the curve and
+any factor) is at least `flick_min_speed`, and `rest` did not pass. Two
+fingers are a two-finger flick when they lifted as a pair within
+`two_finger_lift`. Anything else that ends with momentum (a scroll, a drag
+longer than the flick window) is a distance fling, as in flankr.
+
+```rust
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct SkipMapping {
+    pub skip_threshold: f32,          // px/s, default 1500, > flick_min_speed
+    pub per_doubling: f32,            // default 2.0, 0.5–8
+    pub max: u32,                     // one-finger cap, default 12, ≥ 1
+    pub two_finger_count_factor: u32, // default 4, 1–16
+    pub two_finger_max: u32,          // default 48, ≥ max
+    pub duration_base: f32,           // s, default 0.30, 0.05–2
+    pub duration_per: f32,            // s per boundary after the first, default 0.05, 0–0.5
+    pub duration_max: f32,            // s, default 0.80, ≥ duration_base
+}
+```
+
+**The count**, with `T = skip_threshold`, `k = per_doubling`, `M = max`:
+
+```
+n₁ = 1                                   if v_r < T        (a light flick: the next unit)
+n₁ = min(M, 2 + floor(k · log2(v_r / T))) if v_r ≥ T
+n  = n₁                                   one finger
+n  = min(two_finger_max, n₁ · two_finger_count_factor)    a two-finger flick
+```
+
+With the defaults:
+
+| `v_r` (px/s) | 600–1499 | 1500 | 2121 | 3000 | 4243 | 6000 | 8000 (cap) |
+|---|---|---|---|---|---|---|---|
+| One finger | 1 | 2 | 3 | 4 | 5 | 6 | 6 |
+| Two fingers | 4 | 8 | 12 | 16 | 20 | 24 | 24 |
+
+The mapping is stepped, monotonic and logarithmic in the hand's speed,
+and reads nothing else, so the same flick passes the same number of
+boundaries every time; two fingers pass four times as many. A distance
+fling instead travels about `v / decay` pixels, so how many sections it
+crosses depends on their heights. `two_finger_factor` (5×) stays the
+two-finger drag's and distance fling's; the count's multiplier is the
+separate `two_finger_count_factor`, applied to `n`, not to the speed.
+
+**The target.** On release: the `n`th boundary of the chosen set after
+the section at the window's top, in the flick's direction (the end of the
+range if there are fewer), held by its `SectionId`, not by an offset.
+Placeholder sections count as one each (under `AtMost(n)`, when their
+level is at most n; under `Bookmarked`, when bookmarked).
+
+**The flight.** An ease-out (cubic) over `duration(n) = min(duration_max,
+duration_base + duration_per · (n - 1))` in place of the decay. Each tick
+the offset is `top(target) - (1 - ease(t / duration)) · d₀`, `d₀` being
+the signed distance from the release offset to the target's top at
+release and `top(target)` its top this frame, so a height change, an
+insertion, a split or a merge (item 8) during the flight still lands it
+exactly. A removed target becomes the next section still present in the
+same direction, or the end. At `t = duration` the offset is set to
+`top(target)` exactly. A touch-down stops the flight, as it stops a fling.
+
+**Flicks add up.** A flick lifted within `boost_window` of its touch-down,
+the same way as a counted flight running at touch-down, adds its own `n`
+(a two-finger flick's already multiplied) to the boundaries still to pass;
+the total remaining is capped at `two_finger_max`, and the flight restarts
+from the current offset over `duration(remaining)`. A flick the other way,
+or later, counts afresh from the section at the top. A distance fling
+after a counted flight is unaffected by it.
+
+### 5. Events
+
+`ScrollState::take_fling_events() -> Vec<FlingEvent>` (`#[non_exhaustive]`,
+as are its variants): `Counted { target: SectionId, n: u32 }` on release,
+`Passed { id: SectionId, remaining: u32 }` at each boundary crossed,
+`Retargeted { target: SectionId }` (a removed, split or merged target, or a
+flick added), and `Landed { id: SectionId }`. libcontrols has no haptics;
+an app may turn `Passed` into a tick.
+
+### 6. The thumb label during a counted flight
+
+From release to landing the label shows the **target**'s label, at full
+opacity under every visibility, so the user sees where the flick will land
+and learns the mapping from it; passing labels would change up to dozens
+of times in 0.8 s, unreadably. After landing, section 5's rule resumes
+(the section at the window's top, now the target), held 2 s and faded over
+300 ms. `ScrollbarOptions::skip_count(bool)` (default false) adds the
+boundaries still to pass after the label, with the direction ("↓ 3"),
+counting down as each is crossed, hidden for a one-boundary flight.
+
+### 7. Labels built from levels
+
+Each section's bookmark is the label of its own unit only ("2026",
+"November", "week 3", "Mon 17"). For a reference point (the window's top
+while scrolling, the target during a counted flight) libcontrols gathers,
+for each level from 0 to the finest present, the latest bookmarked
+boundary of that level at or above the point, keeping a part only when it
+is at or after the latest boundary of every coarser level (so October's
+"week 3" is dropped once November begins). The app formats them:
+
+```rust
+#[non_exhaustive]
+pub struct LabelParts<'a> {
+    /// Coarsest first: (level, section, its bookmark).
+    pub parts: &'a [(u8, SectionId, &'a BookmarkText)],
+    pub purpose: LabelPurpose,   // Top, Target or Pill, #[non_exhaustive]
+}
+impl SectionedContent {
+    pub fn set_label_format(
+        &self,
+        f: Option<Arc<dyn Fn(&LabelParts<'_>) -> BookmarkText + Send + Sync>>,
+    );
+}
+```
+
+The default joins the two finest parts, coarsest first, with " · ". The
+formatter lives on `SectionedContent`, which already holds an `Arc`
+source, because `ScrollbarOptions` is `PartialEq` data a closure cannot
+be. `ScrollbarState::thumb_label` returns the formatted text. Without
+levels (all 0) the label is the one bookmark, as section 5 says.
+
+**Pills while the thumb is held follow the same granularity.** A pill is
+drawn for each bookmarked section's top: the sections the app determined
+for each range, the same ones the label names and counted flicks count.
+Its text comes from the same formatter, called with `LabelPurpose::Pill`
+and the parts gathered at that section's top, so the app may shorten it
+("Nov", "wk 3"). The bookmark's own text is used only when no formatter is
+set.
+
+**Larger pills for coarser boundaries.** Appended to `ScrollbarTheme`, with
+`ScrollbarOptions` overrides and `ScrollbarResolved` values per spec 8.5:
+
+| Value | Field | Default | Bounds |
+|---|---|---|---|
+| Scale per level step | `pill_level_scale` | 1.15 | 1.0–2.0 |
+| Largest scale | `pill_scale_max` | 1.6 | 1.0–3.0 |
+| Collapse a placeholder run longer than | `collapse_placeholders_after` | 6 sections | 0 (never) or ≥ 2 |
+
+A pill's step is the finest level among the pills on the track less its
+own level (a month start among weeks is 1 step, a year start among weeks
+2); its font size, padding and height are multiplied by
+`min(pill_scale_max, pill_level_scale^step)`. Crowding is resolved coarser
+first: pills are placed in order of level, coarsest first, and within a
+level nearest the thumb first, each only where it clears those already
+placed by `bookmark_gap`, so finer pills give way before coarser ones. The
+pill nearest the thumb is still drawn at the `near` alphas.
+
+**Collapsed runs of placeholders.** A run of consecutive placeholder
+sections longer than `collapse_placeholders_after` draws pills only at the
+coarsest level found among the run's boundaries (a "2019" year pill past
+many unloaded months); when no boundary in the run is coarser than its
+first, one pill is drawn at the run's first section. As sections load the
+run shortens, and once it is no longer than the threshold its pills are
+drawn at the determined granularity again. Collapsing is drawing only:
+counted flicks still count every placeholder as one section, since a
+count that changed as data loaded, even mid-flight, would no longer be
+learnable, and the target is held by id either way.
+
+`ScrollbarOptions::bookmark_levels(max: u8)` stays as a generic option,
+default 7 (every level), for an app whose sections are finer than it wants
+pills for; it only drops pills of a level finer than `max`, before
+crowding. ShotToss does not use it.
+
+### 8. Levels on a flat list, and splitting and merging
+
+```rust
+pub struct Section {
+    // id, height, estimated, placeholder …
+    /// Appended: the level of the boundary at this section's top, 0 the
+    /// coarsest. Default 0.
+    pub level: u8,
+}
+impl Section { pub fn level(self, level: u8) -> Self; }   // 0–7, higher clamps to 7
+
+impl SectionEdit<'_> {
+    /// Replace `id` with `pieces` (new ids, in order); false if absent.
+    pub fn split(&mut self, id: SectionId, pieces: Vec<Section>) -> bool;
+    /// Replace the consecutive run `first..=last` with `merged`.
+    pub fn merge(&mut self, first: SectionId, last: SectionId, merged: Section) -> bool;
+}
+```
+
+The list stays flat, one section per finest unit the app chose for that
+range, and a section's level is that of the coarsest unit starting at its
+top (ShotToss: a split month's first week carries the month's level 1, its
+other weeks level 2). A tree was not chosen because every pane, window,
+anchoring and scrollbar path reads a flat list of tops. Replaced ids lose
+their drawings and bookmarks; the app adds the new ids' bookmarks in the
+same `edit`. Anchoring by run: when the section anchoring the window is
+split, the window keeps its distance from the top of the replacing run;
+when merged, its distance from the old run's first top, now inside the
+merged section; nothing on screen moves. A counted flight's target that is
+split becomes the first piece, and one merged the merged section's top.
+
+### 9. Steps and version
+
+Step 1's **Done when:** adds: `Section::level` defaulting to 0 and a
+level-0 list behaving as before; `split` and `merge` in one `edit`
+rebuilding once; a split or merge of the anchoring section leaving the
+window's content in place; replaced ids' drawings and bookmarks dropped.
+
+Step 4 is replaced by:
+
+4. **The fling profile and two fingers** (items 1 and 2, and 4.3's
+   two-finger drag).
+   **Done when:** release-pipeline tests pass against flankr's numbers
+   (knee 1000, power 1.5, the weighted-line fit equal to flankr's
+   `release_speed` on its sample sets, the boost added within 400 ms of
+   touch-down and not after); `classic()` passes the existing
+   `tests/scroll.rs` flings unchanged; the default profile's fling covers
+   the same distance at 1/60 s and 1/10 s frames; a two-finger drag
+   moves 5× and drops to 1× when one finger lifts; a pair lifted within
+   100 ms flings 5× and one 200 ms apart 1×; the cap at `max_speed`; no
+   `Click` from a two-finger press; `with_fling` overrides resolving
+   against the theme.
+
+Step 5 is replaced by:
+
+5. **Stops, counted flicks and their feedback** (items 3 to 6).
+   **Done when:** the classifier passes a 150 ms, 200 px, 2000 px/s
+   gesture as a flick and rejects one of 300 ms, of 400 px, of 400 px/s,
+   or with a rest; `Boundary` lands on the first boundary past the
+   natural landing point in both directions; `Count` passes the table's
+   counts for one finger and two at each speed in it, and the same flick
+   passes the same count over sections of 10 px and of 10 000 px; a
+   non-flick fling under `Count` is a distance fling; placeholders count
+   as one each; a target growing, removed, split or merged mid-flight
+   lands as item 4 says; flicks adding up within 400 ms, capped at 48; the
+   flight's length by `duration(n)`; the label showing the target from
+   release to landing, then the top section; `skip_count` counting down;
+   `FlingEvent`s in order.
+
+Step 6's **Done when:** adds: the label's parts at a month, week and day
+boundary and just after a coarser one (the stale finer part dropped); the
+default join and an app formatter; one pill per bookmarked section of the
+determined granularity, its text from the formatter with
+`LabelPurpose::Pill`; a month start among weeks drawn at 1.15× and a year
+start at 1.3225×, never above 1.6×; under crowding, week pills giving way
+before month pills and month pills before year pills; a run of 7
+placeholder months drawing only its year pills, or one pill when it holds
+no year start, and drawing month pills again once 2 of them load; a
+counted flick over that run counting each placeholder as one;
+`bookmark_levels` dropping finer pills; `AtMost(1)` counting the same
+months whether or not some are split, and `Sections` counting weeks in a
+split month and months elsewhere.
+
+Step 8 is as before but at **0.12.0** and tag `v0.12.0`, its `VERSIONS.md`
+entry marking **Breaking** the removal of the four `ScrollTheme` fields and
+flankr's fling as the default; an app that wants 0.11.0's feel sets
+`ScrollTheme { fling: FlingProfile::classic(), ..ScrollTheme::default() }`.
+Everything else is additive (fields appended to `#[non_exhaustive]`
+structs, new types and methods). Its **Done when:** also requires flankr's
+scroll tests to pass on `FlingProfile::flankr()` when flankr takes 0.12.0.
+
+Section 8's other bullets (the jump scroll, the jump line, pull to
+refresh, the shimmer, the memory grades, the block layout) stand. Open
+question 1 is answered: `two_finger_factor` 5× for dragging and distance
+flings, `two_finger_count_factor` 4× for counted flicks.
