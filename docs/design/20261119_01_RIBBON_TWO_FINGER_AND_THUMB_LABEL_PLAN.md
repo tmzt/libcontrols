@@ -866,3 +866,146 @@ Section 8's other bullets (the jump scroll, the jump line, pull to
 refresh, the shimmer, the memory grades, the block layout) stand. Open
 question 1 is answered: `two_finger_factor` 5× for dragging and distance
 flings, `two_finger_count_factor` 4× for counted flicks.
+
+## Amendment — 2026-11-19 18:34 EST: bookmarks carry their own size; libcontrols infers nothing from levels (amends the 2026-11-19 18:31 EST amendment, items 3, 7 and 9)
+
+The owner (2026-11-19), relayed by the ShotToss coordinator: "libcontrols
+doesn't know anything about months or years, just bookmarks, if size is
+going to be a setting on the bookmark that's fine (could small, medium,
+large) or a point size, following the libcontrols convention (usually an
+enum that switched between exact and themed)". Those words are the
+agreement for this amendment. It amends the 18:31 EST amendment as stated
+in each item below; everything else in it stands.
+
+### 1. A bookmark's size is the app's (replaces item 7's "Larger pills for coarser boundaries", its table, and its crowding rule)
+
+The level-derived scale (`pill_level_scale` 1.15 per level step,
+`pill_scale_max` 1.6) and those two theme values are removed. The
+precedent for a value that is either exact or relative is `DrawerSize`
+(`src/drawer/mod.rs`): a `#[non_exhaustive]` enum with a `Px(f32)`
+variant in router pixels and a variant resolved against something else.
+`BookmarkSize` follows it, its other variant resolved against the theme:
+
+```rust
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum BookmarkScale { Small, Medium, Large }
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum BookmarkSize {
+    /// One of the theme's sizes (`ControlTheme::scrollbar`).
+    Themed(BookmarkScale),
+    /// The pill's font size in router pixels.
+    Px(f32),
+}
+impl Default for BookmarkSize { fn default() -> Self { Self::Themed(BookmarkScale::Medium) } }
+
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct Bookmark { pub text: BookmarkText, pub size: BookmarkSize }
+impl Bookmark {
+    pub fn new(text: BookmarkText) -> Self;            // Medium
+    pub fn size(self, size: BookmarkSize) -> Self;
+}
+impl SectionedContent {
+    /// Bookmark `id` with a size, replacing any bookmark it had.
+    pub fn add_bookmark_with(&self, id: SectionId, bookmark: Bookmark);
+    /// Every bookmark with its size, in section order.
+    pub fn bookmarks_with(&self) -> Vec<(SectionId, Bookmark)>;
+}
+```
+
+`add_bookmark(id, text)` is unchanged and adds a `Medium` bookmark;
+`remove_bookmark` and `bookmarks` are unchanged and return the text.
+Appended to `ScrollbarTheme` (spec 8.5, with `ScrollbarOptions` overrides
+and `ScrollbarResolved` values):
+
+| Field | Default | Bounds | Meaning |
+|---|---|---|---|
+| `bookmark_scale_small` | 0.85 | 0.5–1.0 | `Small`, times `bookmark_font_size` |
+| `bookmark_scale_large` | 1.30 | 1.0–2.5 | `Large`, times `bookmark_font_size` |
+
+`Medium` is `bookmark_font_size` itself (13), so an app that sets no size
+draws exactly as 0.11.0. A pill's font size is `bookmark_font_size` times
+its scale, or `Px`; its padding and height are scaled by the same ratio to
+`bookmark_font_size`. Additive: a new type, a new struct, two new methods
+and two appended theme fields.
+
+**Crowding by size.** Pills are placed largest resolved font size first,
+then, among equal sizes, nearest the thumb first, each only where it
+clears those already placed by `bookmark_gap`; smaller pills give way
+first. Size was chosen over a separate priority so that one setting the
+app makes decides both how a pill looks and which pills survive; a
+priority field can be appended to `Bookmark` later if an app needs a small
+pill to win.
+
+### 2. Pills are the bookmarks the app set (replaces item 7's "Pills while the thumb is held follow the same granularity", "Collapsed runs of placeholders" and the `bookmark_levels` paragraph)
+
+A pill is drawn for each bookmark, with the bookmark's text, as in 0.11.0.
+Which sections carry bookmarks, at what size and with what text is the
+app's decision; libcontrols reads no level to choose them.
+
+- `LabelPurpose::Pill` is removed: a pill's text is its bookmark's text.
+- `collapse_placeholders_after` is removed. Which bookmarks a long run of
+  placeholder sections should keep is meaning only the app has; the app
+  sets and removes bookmarks as its data arrives (it already edits the
+  list on each batch). Example, ShotToss's use only: over a long run of
+  unloaded months it bookmarks only each year start, `Large`, and adds the
+  month bookmarks as the months load.
+- `ScrollbarOptions::bookmark_levels` is removed: an app that wants fewer
+  pills sets fewer bookmarks.
+
+### 3. The label is the app's (replaces item 7's gathering of parts by level and `LabelParts`)
+
+libcontrols no longer gathers one part per level or drops "stale finer
+parts"; that rule assumed a hierarchy only the app knows. The formatter is
+told only where the label is for:
+
+```rust
+#[non_exhaustive]
+pub struct LabelRequest {
+    pub section: SectionId,       // the section the label is for
+    pub index: usize,             // its place in the list
+    pub purpose: LabelPurpose,    // Top or Target, #[non_exhaustive]
+}
+impl SectionedContent {
+    pub fn set_label_format(
+        &self,
+        f: Option<Arc<dyn Fn(&LabelRequest) -> BookmarkText + Send + Sync>>,
+    );
+}
+```
+
+`section` is the section at the window's top while scrolling (`Top`), or
+the counted flight's target (`Target`). Without a formatter the label is
+the bookmark of the last bookmarked section at or above that section, as
+section 5 says; the label is drawn at `Medium` size unless
+`ScrollbarOptions` overrides it. Example, ShotToss's use only: its
+formatter returns "November 2026 · week 3" for a week section, from its
+own catalogue.
+
+### 4. Levels are an ordering the app assigns (amends items 3 and 8)
+
+`Section::level` stays, as a generic number the app gives each section's
+top boundary: 0 the most significant, higher less. libcontrols uses it in
+one place, `Boundaries::AtMost(n)`, which counts the tops whose level is at
+most n; it attaches no other meaning to it and draws nothing from it.
+Item 3's reason for offering no exact `Level(n)` is restated without
+dates: an exact-level count would skip every top where a more significant
+boundary starts at the same place. Item 8's text stands; its example of a
+split range is ShotToss's use, not libcontrols' behaviour.
+`Boundaries::Sections` (every top) and `Bookmarked` read no level.
+
+### 5. Steps (amends item 9)
+
+Step 6's added **Done when:** is replaced by: the label from a formatter
+with `Top` and `Target`, and without one the last bookmark at or above; a
+pill per bookmark with its own text; `Small`, `Medium` and `Large` drawn
+at 0.85×, 1× and 1.3× of `bookmark_font_size`, and `Px(20.0)` at 20 px
+with padding scaled to match; `Medium` and `add_bookmark` drawing exactly
+as 0.11.0; under crowding, smaller pills giving way before larger ones,
+and nearest first among equals; `AtMost(n)` counting the same tops
+whether or not other sections are split, and `Sections` counting every
+top. Step 1's and step 5's additions stand. The version stays 0.12.0; this
+amendment's changes are additive over the 18:31 EST amendment.
