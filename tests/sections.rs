@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use libcontrols::{
     BookmarkText, Button, ControlTheme, DrawContext, MouseButton, MouseEvent, NodeId, Rect, Router,
-    ScrollAxis, ScrollEdge, ScrollPane, ScrollState, ScrollbarOptions, Section, SectionContext,
-    SectionId, SectionSource, SectionedContent,
+    ScrollAxis, ScrollEdge, ScrollPane, ScrollState, ScrollbarOptions, ScrollbarVisibility,
+    Section, SectionContext, SectionId, SectionSource, SectionWindow, SectionedContent,
 };
 use libmsdf::drawlist::{DrawList, SdfInstance, SdfKind};
 
@@ -669,4 +669,165 @@ fn splitting_or_merging_the_anchoring_section_keeps_the_window_in_place() {
     assert_eq!(f.top(400), 8000.0);
     assert_eq!(f.offset(), 10_500.0, "inside the merged section, unmoved");
     assert_eq!(f.content.len(), 9);
+}
+
+// ---- Plan 20261119_01, step 2: the window and the pending length ----
+
+/// 500 sections of mixed heights, 40 to 220.
+fn mixed() -> Vec<Section> {
+    (0..500)
+        .map(|i| Section::new(SectionId(i), 40.0 + (i * 37 % 7) as f32 * 30.0))
+        .collect()
+}
+
+/// The inclusive range of `sections` overlapping `a..b`, by brute force.
+fn brute(sections: &[Section], a: f32, b: f32) -> (usize, usize) {
+    let mut top = 0.0;
+    let mut hit = Vec::new();
+    for (i, s) in sections.iter().enumerate() {
+        if top < b && top + s.height > a {
+            hit.push(i);
+        }
+        top += s.height;
+    }
+    (*hit.first().unwrap(), *hit.last().unwrap())
+}
+
+fn check_window(w: SectionWindow, sections: &[Section], offset: f32, margins: [f32; 3]) {
+    let len = VP.h;
+    let total: f32 = sections.iter().map(|s| s.height).sum();
+    let around = |m: f32| {
+        let a = (offset - m * len).max(0.0);
+        let b = (offset + len + m * len).min(total);
+        brute(sections, a, b)
+    };
+    assert_eq!(
+        w.shown,
+        brute(sections, offset, offset + len),
+        "at {offset}"
+    );
+    assert_eq!(w.close, around(margins[0]), "close at {offset}");
+    assert_eq!(w.near, around(margins[1]), "near at {offset}");
+    assert_eq!(w.keep, around(margins[2]), "keep at {offset}");
+    assert_eq!(
+        w.shown_ids,
+        (sections[w.shown.0].id, sections[w.shown.1].id)
+    );
+}
+
+#[test]
+fn the_window_reports_four_ranges_at_the_top_the_middle_and_the_end() {
+    let list = mixed();
+    let f = Fixture::new(list.clone(), Counting::default(), plain());
+    f.render();
+    let max = f.pane().state().max()[1];
+    for offset in [0.0, 30_000.0, max] {
+        f.router.scroll_to(f.pane, [0.0, offset]);
+        f.render();
+        let w = f.content.take_window().expect("changed");
+        check_window(w, &list, f.offset(), [1.0, 5.0, 20.0]);
+        assert!(!w.following);
+        assert_eq!(f.content.window(), Some(w));
+    }
+    assert_eq!(f.content.take_window(), None, "unchanged since taken");
+    f.content.set_window_margins(0.5, 2.0, 4.0);
+    f.router.scroll_to(f.pane, [0.0, 30_000.0]);
+    f.render();
+    let w = f.content.take_window().expect("changed");
+    check_window(w, &list, 30_000.0, [0.5, 2.0, 4.0]);
+}
+
+#[test]
+fn take_window_waits_for_a_change_and_for_the_thumbs_release() {
+    let f = Fixture::new(
+        uniform(100, 100.0, false),
+        Counting::default(),
+        plain().with_scrollbar(ScrollbarOptions::default()),
+    );
+    assert_eq!(f.content.take_window(), None, "not worked out yet");
+    f.router.scroll_to(f.pane, [0.0, 4510.0]);
+    f.render();
+    assert_eq!(f.content.take_window().map(|w| w.shown), Some((45, 55)));
+    f.render();
+    assert_eq!(f.content.take_window(), None, "no change");
+    f.router.scroll_by(f.pane, [0.0, 10.0]);
+    f.render();
+    assert_eq!(f.content.take_window(), None, "the same sections");
+    f.router.scroll_by(f.pane, [0.0, 100.0]);
+    f.render();
+    assert_eq!(f.content.take_window().map(|w| w.shown), Some((46, 56)));
+    // Held: the thumb is 100 long, at 4620 of 9000 it is at 462..562.
+    let on_thumb = [VP.right() - 6.0, VP.y + 500.0];
+    f.router.deliver_mouse(MouseEvent::Down {
+        pos: on_thumb,
+        button: MouseButton::Left,
+    });
+    assert!(f.pane().scrollbar().unwrap().is_held());
+    f.router.deliver_mouse(MouseEvent::Drag {
+        start_pos: on_thumb,
+        current_pos: [on_thumb[0], on_thumb[1] + 300.0],
+        delta: [0.0, 300.0],
+        button: MouseButton::Left,
+    });
+    f.render();
+    assert!(f.offset() > 7000.0, "{}", f.offset());
+    assert_eq!(f.content.take_window(), None, "held");
+    f.router.deliver_mouse(MouseEvent::Up {
+        pos: on_thumb,
+        button: MouseButton::Left,
+    });
+    f.render();
+    let w = f.content.take_window().expect("the release window");
+    assert_eq!(w.shown.0, (f.offset() / 100.0) as usize);
+    f.render();
+    assert_eq!(f.content.take_window(), None, "once");
+}
+
+#[test]
+fn the_window_is_following_at_a_sticky_end() {
+    let f = Fixture::new(
+        uniform(50, 100.0, false),
+        Counting::default(),
+        plain().with_state(ScrollState::sticky(ScrollEdge::End)),
+    );
+    f.render();
+    let w = f.content.take_window().unwrap();
+    assert!(w.following);
+    assert_eq!(w.shown, (40, 49));
+    assert_eq!(w.keep, (0, 49));
+    f.router.scroll_to(f.pane, [0.0, 0.0]);
+    f.render();
+    assert!(!f.content.take_window().unwrap().following);
+}
+
+#[test]
+fn the_pending_length_lengthens_the_thumbs_content_not_the_range() {
+    let f = Fixture::new(
+        uniform(40, 100.0, false),
+        Counting::default(),
+        plain().with_scrollbar(ScrollbarOptions::default().visibility(ScrollbarVisibility::Always)),
+    );
+    let thumb = |list: &DrawList| {
+        list.instances
+            .iter()
+            .find(|i| matches!(i.kind, SdfKind::RoundedBox { .. }) && i.size[0] == 4.0)
+            .map(|i| (i.position[1], i.size[1]))
+            .expect("a thumb")
+    };
+    f.router.scroll_to(f.pane, [0.0, 3000.0]);
+    let (y, h) = thumb(&f.render());
+    assert_eq!(h, 250.0, "1000 of 4000");
+    assert_eq!(y + h, VP.bottom(), "at the bottom");
+    f.content.set_pending_length(1000.0);
+    assert_eq!(f.content.pending_length(), 1000.0);
+    let (y, h) = thumb(&f.render());
+    assert_eq!(h, 200.0, "1000 of 5000");
+    assert!(
+        y + h < VP.bottom() - 100.0,
+        "short of the bottom: {}",
+        y + h
+    );
+    assert_eq!(f.pane().state().max()[1], 3000.0, "the range unchanged");
+    f.router.scroll_by(f.pane, [0.0, 500.0]);
+    assert_eq!(f.offset(), 3000.0);
 }

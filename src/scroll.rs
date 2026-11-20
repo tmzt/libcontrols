@@ -727,6 +727,7 @@ impl ScrollPane {
                 now - s.last_moved(),
             )
         });
+        let content = content + self.sections.as_ref().map_or(0.0, |c| c.pending_length());
         let resolved = options.with_theme(bar_theme);
         bar.with(|b| {
             b.resolved = resolved;

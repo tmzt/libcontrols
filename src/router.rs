@@ -2023,6 +2023,10 @@ impl Router {
             s.anchors = anchors;
         });
         self.record_section_anchors(pane);
+        if let Some(c) = pane.sections() {
+            let (offset, following) = pane.state().with(|s| (s.offset(), s.is_following()));
+            c.note_window(offset, vlen, following, held);
+        }
         pane.feed_scrollbar(
             &self.scrollbar_theme.get(),
             &self.scroll_theme.get(),

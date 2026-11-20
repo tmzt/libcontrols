@@ -271,9 +271,54 @@ type Replaced = HashMap<SectionId, (SectionId, f32)>;
 /// Most replacements remembered before the oldest are forgotten.
 const MAX_REPLACED: usize = 4096;
 
+/// The sections in and near a pane's window, by index into the list
+/// (flankr's `ViewWindow`), reported to the app for fetching its data
+/// ([`SectionedContent::take_window`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SectionWindow {
+    /// Inclusive index ranges into the list: in the window; within
+    /// `close` window lengths of it; within `near`; within `keep`.
+    pub shown: (usize, usize),
+    pub close: (usize, usize),
+    pub near: (usize, usize),
+    pub keep: (usize, usize),
+    /// The ids at the ends of `shown`, for an app that keys by id.
+    pub shown_ids: (SectionId, SectionId),
+    /// The pane is following its sticky end
+    /// ([`ScrollState::is_following`](crate::ScrollState::is_following)).
+    pub following: bool,
+}
+
+/// The window's margins, in window lengths each side (flankr's).
+#[derive(Copy, Clone, Debug)]
+struct Margins {
+    close: f32,
+    near: f32,
+    keep: f32,
+}
+
+impl Default for Margins {
+    fn default() -> Self {
+        Self {
+            close: 1.0,
+            near: 5.0,
+            keep: 20.0,
+        }
+    }
+}
+
 #[derive(Default)]
 struct Inner {
     sections: Vec<Section>,
+    /// The window last worked out, the one last taken, and whether a
+    /// scrollbar thumb holds the pane.
+    window: Option<SectionWindow>,
+    taken: Option<SectionWindow>,
+    window_held: bool,
+    margins: Margins,
+    /// Length known past the last section, counted by a scrollbar only.
+    pending: f32,
     placeholder_height: PlaceholderHeight,
     /// How many times the tops were rebuilt (for tests and counting).
     rebuilds: u64,
@@ -350,6 +395,37 @@ impl Inner {
             at += s.length(ph);
         }
         self.tops.push(at);
+    }
+
+    /// The inclusive index range of the sections overlapping `start..end`;
+    /// when none does, the nearest one. The list is not empty.
+    fn span(&self, start: f32, end: f32) -> (usize, usize) {
+        let r = self.overlapping(start, end);
+        if r.is_empty() {
+            let k = r.start.min(self.sections.len() - 1);
+            (k, k)
+        } else {
+            (r.start, r.end - 1)
+        }
+    }
+
+    /// The window `start..start + len` and its margins.
+    fn window_at(&self, start: f32, len: f32, following: bool) -> Option<SectionWindow> {
+        if self.sections.is_empty() {
+            return None;
+        }
+        let len = len.max(f32::MIN_POSITIVE);
+        let end = start + len;
+        let around = |m: f32| self.span(start - m * len, end + m * len);
+        let shown = self.span(start, end);
+        Some(SectionWindow {
+            shown,
+            close: around(self.margins.close),
+            near: around(self.margins.near),
+            keep: around(self.margins.keep),
+            shown_ids: (self.sections[shown.0].id, self.sections[shown.1].id),
+            following,
+        })
     }
 
     /// The id index alone, mid-batch.
@@ -706,6 +782,63 @@ impl SectionedContent {
     #[cfg(test)]
     pub(crate) fn rebuilds(&self) -> u64 {
         self.with(|s| s.rebuilds)
+    }
+
+    /// The window of the pane drawing these sections when it changed since
+    /// last taken; `None` while the pane's scrollbar thumb is held or the
+    /// list is empty. A pane works it out on each range update; the window
+    /// at a thumb's release is reported on the update after it. An app
+    /// fetches data for `near`, may forget what is outside `keep`, and under
+    /// memory pressure may use `close` instead.
+    pub fn take_window(&self) -> Option<SectionWindow> {
+        self.with(|s| {
+            if s.window_held || s.window.is_none() || s.window == s.taken {
+                return None;
+            }
+            s.taken = s.window;
+            s.window
+        })
+    }
+
+    /// The window last worked out, taken or not.
+    pub fn window(&self) -> Option<SectionWindow> {
+        self.with(|s| s.window)
+    }
+
+    /// The window's margins in window lengths each side: `close` (1.0 by
+    /// default), `near` (5.0) and `keep` (20.0); negative counts as 0.
+    /// They apply from the next range update.
+    pub fn set_window_margins(&self, close: f32, near: f32, keep: f32) {
+        self.with(|s| {
+            s.margins = Margins {
+                close: close.max(0.0),
+                near: near.max(0.0),
+                keep: keep.max(0.0),
+            }
+        });
+    }
+
+    /// Extra length counted by a scrollbar after the last section, not
+    /// scrollable into: content known to exist past the end (0 by
+    /// default; negative counts as 0). A pane's range is unchanged by it;
+    /// its scrollbar's content length is `total_height + pending_length`.
+    pub fn set_pending_length(&self, px: f32) {
+        self.with(|s| s.pending = if px.is_finite() { px.max(0.0) } else { 0.0 });
+    }
+
+    /// The length set by [`set_pending_length`](Self::set_pending_length).
+    pub fn pending_length(&self) -> f32 {
+        self.with(|s| s.pending)
+    }
+
+    /// A pane's range update: its window is `start..start + len`.
+    pub(crate) fn note_window(&self, start: f32, len: f32, following: bool, held: bool) {
+        self.with(|s| {
+            s.window_held = held;
+            if !held {
+                s.window = s.window_at(start, len, following);
+            }
+        });
     }
 
     /// How many sections there are.
