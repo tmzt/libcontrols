@@ -92,8 +92,9 @@ pub use scrollbar::{
     ScrollbarTheme, ScrollbarVisibility,
 };
 pub use sections::{
-    BookmarkText, DEFAULT_PLACEHOLDER_HEIGHT, MAX_LEVEL, Section, SectionContext, SectionEdit,
-    SectionId, SectionSource, SectionWindow, SectionedContent,
+    Bookmark, BookmarkScale, BookmarkSize, BookmarkText, DEFAULT_PLACEHOLDER_HEIGHT, LabelFormat,
+    LabelPurpose, LabelRequest, MAX_LEVEL, Section, SectionContext, SectionEdit, SectionId,
+    SectionSource, SectionWindow, SectionedContent,
 };
 pub use selectable_label::{SelectableLabel, SelectableLabelState};
 pub use slider::{Slider, SliderState, ThumbStyle};

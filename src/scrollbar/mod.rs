@@ -27,11 +27,12 @@ use crate::control::HostedControl;
 use crate::event::{ControlAction, ControlPart, EventContext, KeyboardEvent, MouseEvent};
 use crate::flags::NodeFlags;
 use crate::rect::Rect;
-use crate::sections::SectionId;
+use crate::sections::{BookmarkScale, BookmarkSize, SectionId};
 use crate::theme::ControlTheme;
 use crate::traits::{DrawContext, DrawControl};
 
 pub use bookmarks::BookmarkPill;
+pub(crate) use state::LabelFlight;
 pub use state::ScrollbarState;
 
 /// When the thumb is shown (the app's three settings).
@@ -90,6 +91,26 @@ pub struct ScrollbarTheme {
     pub bookmark_code_pad: f32,
     /// That chip's corner radius.
     pub bookmark_code_radius: f32,
+    /// The thumb label's font size (`Medium`).
+    pub thumb_label_font_size: f32,
+    /// The thumb label pill's padding across.
+    pub thumb_label_pad_x: f32,
+    /// The thumb label pill's padding along.
+    pub thumb_label_pad_y: f32,
+    /// From the label pill's right edge to the thumb's left edge.
+    pub thumb_label_gap: f32,
+    /// The label pill's background alpha, times its colour's.
+    pub thumb_label_bg_alpha: f32,
+    /// The label's text alpha, times its colour's.
+    pub thumb_label_text_alpha: f32,
+    /// `BookmarkScale::Small`, times `bookmark_font_size` (0.5-1).
+    pub bookmark_scale_small: f32,
+    /// `BookmarkScale::Large`, times `bookmark_font_size` (1-2.5).
+    pub bookmark_scale_large: f32,
+    /// The label pill's background (`None`: the theme's `bg_color`).
+    pub thumb_label_bg: Option<[f32; 4]>,
+    /// The label's text colour (`None`: the theme's `text_color`).
+    pub thumb_label_color: Option<[f32; 4]>,
 }
 
 impl Default for ScrollbarTheme {
@@ -115,6 +136,16 @@ impl Default for ScrollbarTheme {
             bookmark_gap: 2.0,
             bookmark_code_pad: 2.0,
             bookmark_code_radius: 3.0,
+            thumb_label_font_size: 13.0,
+            thumb_label_pad_x: 12.0,
+            thumb_label_pad_y: 4.0,
+            thumb_label_gap: 8.0,
+            thumb_label_bg_alpha: 0.85,
+            thumb_label_text_alpha: 1.0,
+            bookmark_scale_small: 0.85,
+            bookmark_scale_large: 1.30,
+            thumb_label_bg: None,
+            thumb_label_color: None,
         }
     }
 }
@@ -148,6 +179,22 @@ pub struct ScrollbarOptions {
     pub visibility: ScrollbarVisibility,
     /// Per instance: bookmarks drawn while held, `true` unless set.
     pub bookmarks: Option<bool>,
+    pub thumb_label_font_size: Option<f32>,
+    pub thumb_label_pad_x: Option<f32>,
+    pub thumb_label_pad_y: Option<f32>,
+    pub thumb_label_gap: Option<f32>,
+    pub thumb_label_bg_alpha: Option<f32>,
+    pub thumb_label_text_alpha: Option<f32>,
+    pub bookmark_scale_small: Option<f32>,
+    pub bookmark_scale_large: Option<f32>,
+    pub thumb_label_bg: Option<[f32; 4]>,
+    pub thumb_label_color: Option<[f32; 4]>,
+    /// Per instance: a label on the thumb while scrolling (`false` unless
+    /// set).
+    pub thumb_label: bool,
+    /// Per instance: during a counted flight, the boundaries still to pass
+    /// after the label ("↓ 3"; `false` unless set).
+    pub skip_count: bool,
 }
 
 macro_rules! setter {
@@ -187,6 +234,33 @@ impl ScrollbarOptions {
     setter!(bookmark_gap: f32);
     setter!(bookmark_code_pad: f32);
     setter!(bookmark_code_radius: f32);
+    setter!(thumb_label_font_size: f32);
+    setter!(thumb_label_pad_x: f32);
+    setter!(thumb_label_pad_y: f32);
+    setter!(thumb_label_gap: f32);
+    setter!(thumb_label_bg_alpha: f32);
+    setter!(thumb_label_text_alpha: f32);
+    setter!(bookmark_scale_small: f32);
+    setter!(bookmark_scale_large: f32);
+    setter!(thumb_label_bg: [f32; 4]);
+    setter!(thumb_label_color: [f32; 4]);
+
+    /// Show a label on the thumb while scrolling: the bookmark of the
+    /// section at the window's top, or the app's formatter's text
+    /// ([`SectionedContent::set_label_format`](crate::SectionedContent::set_label_format)).
+    #[must_use]
+    pub fn thumb_label(mut self, on: bool) -> Self {
+        self.thumb_label = on;
+        self
+    }
+
+    /// During a counted flight, show the boundaries still to pass after
+    /// the label, with the direction ("↓ 3").
+    #[must_use]
+    pub fn skip_count(mut self, on: bool) -> Self {
+        self.skip_count = on;
+        self
+    }
 
     /// When the thumb is shown.
     #[must_use]
@@ -241,6 +315,26 @@ impl ScrollbarOptions {
             bookmark_code_radius: self
                 .bookmark_code_radius
                 .unwrap_or(theme.bookmark_code_radius),
+            thumb_label_font_size: self
+                .thumb_label_font_size
+                .unwrap_or(theme.thumb_label_font_size),
+            thumb_label_pad_x: self.thumb_label_pad_x.unwrap_or(theme.thumb_label_pad_x),
+            thumb_label_pad_y: self.thumb_label_pad_y.unwrap_or(theme.thumb_label_pad_y),
+            thumb_label_gap: self.thumb_label_gap.unwrap_or(theme.thumb_label_gap),
+            thumb_label_bg_alpha: self
+                .thumb_label_bg_alpha
+                .unwrap_or(theme.thumb_label_bg_alpha),
+            thumb_label_text_alpha: self
+                .thumb_label_text_alpha
+                .unwrap_or(theme.thumb_label_text_alpha),
+            bookmark_scale_small: self
+                .bookmark_scale_small
+                .unwrap_or(theme.bookmark_scale_small),
+            bookmark_scale_large: self
+                .bookmark_scale_large
+                .unwrap_or(theme.bookmark_scale_large),
+            thumb_label_bg: self.thumb_label_bg.or(theme.thumb_label_bg),
+            thumb_label_color: self.thumb_label_color.or(theme.thumb_label_color),
         }
     }
 }
@@ -270,6 +364,32 @@ pub struct ScrollbarResolved {
     pub bookmark_gap: f32,
     pub bookmark_code_pad: f32,
     pub bookmark_code_radius: f32,
+    pub thumb_label_font_size: f32,
+    pub thumb_label_pad_x: f32,
+    pub thumb_label_pad_y: f32,
+    pub thumb_label_gap: f32,
+    pub thumb_label_bg_alpha: f32,
+    pub thumb_label_text_alpha: f32,
+    pub bookmark_scale_small: f32,
+    pub bookmark_scale_large: f32,
+    pub thumb_label_bg: Option<[f32; 4]>,
+    pub thumb_label_color: Option<[f32; 4]>,
+}
+
+impl ScrollbarResolved {
+    /// A bookmark's pill font size.
+    pub fn bookmark_size(&self, size: BookmarkSize) -> f32 {
+        match size {
+            BookmarkSize::Px(px) if px.is_finite() => px.max(1.0),
+            BookmarkSize::Themed(BookmarkScale::Small) => {
+                self.bookmark_font_size * self.bookmark_scale_small.clamp(0.5, 1.0)
+            }
+            BookmarkSize::Themed(BookmarkScale::Large) => {
+                self.bookmark_font_size * self.bookmark_scale_large.clamp(1.0, 2.5)
+            }
+            _ => self.bookmark_font_size,
+        }
+    }
 }
 
 /// What a scrollbar reports, read with [`ScrollbarState::take_events`].
@@ -307,9 +427,17 @@ pub(crate) fn draw_bar(
 ) {
     #[cfg(feature = "markdown")]
     let faces = state.with(|s| s.faces.clone());
-    let (thumb, alpha, r, pills, fade) = state.with(|s| {
+    let (thumb, alpha, r, pills, fade, label) = state.with(|s| {
         let pills = pills_of(s, ctx);
-        (s.thumb(), s.alpha(), s.resolved, pills, s.bookmarks_alpha())
+        let label = label_of(s, ctx);
+        (
+            s.thumb(),
+            s.alpha(),
+            s.resolved,
+            pills,
+            s.bookmarks_alpha(),
+            label,
+        )
     });
     if let Some(t) = thumb
         && alpha > 0.0
@@ -324,11 +452,22 @@ pub(crate) fn draw_bar(
             anim: 0,
         });
     }
-    if pills.is_empty() {
+    if pills.is_empty() && label.is_none() {
         return;
     }
     if let Some(c) = clip {
         list.push_clip(c.pos(), c.size());
+    }
+    if let Some((pill, a)) = &label {
+        bookmarks::draw_label(
+            list,
+            ctx,
+            &r,
+            pill,
+            *a,
+            #[cfg(feature = "markdown")]
+            faces.as_deref(),
+        );
     }
     bookmarks::draw(
         list,
@@ -342,6 +481,27 @@ pub(crate) fn draw_bar(
     if clip.is_some() {
         list.push_clip_end();
     }
+}
+
+/// The thumb label as it is drawn now, with its alpha.
+pub(crate) fn label_of(s: &state::Inner, ctx: &DrawContext) -> Option<(bookmarks::LabelPill, f32)> {
+    let alpha = s.label_alpha();
+    if alpha <= 0.0 {
+        return None;
+    }
+    let thumb = s.thumb()?;
+    let (id, text) = s.label()?;
+    let r = s.resolved;
+    let m = bookmarks::PillMeasure::new(
+        ctx,
+        &r,
+        #[cfg(feature = "markdown")]
+        s.faces.as_deref(),
+    );
+    Some((
+        bookmarks::label_layout(s.track, thumb, &r, id, &text, &m),
+        alpha,
+    ))
 }
 
 /// The bookmarks as they are drawn now.
@@ -459,10 +619,13 @@ impl Scrollbar {
         let track = self.track.get();
         let visibility = self.options.visibility;
         let on = self.options.bookmarks_on();
+        let (label, skip) = (self.options.thumb_label, self.options.skip_count);
         self.state.with(|s| {
             s.track = track;
             s.visibility = visibility;
             s.bookmarks_on = on;
+            s.thumb_label_on = label;
+            s.skip_count_on = skip;
         });
     }
 
@@ -557,5 +720,113 @@ mod tests {
         assert!(ScrollbarOptions::default().bookmarks_on());
         assert!(!ScrollbarOptions::default().bookmarks(false).bookmarks_on());
         assert_eq!(ControlTheme::default().scrollbar, ScrollbarTheme::default());
+    }
+
+    // ---- Plan 20261119_01, step 6: the thumb label ----
+
+    use crate::sections::{BookmarkText, Section, SectionId, SectionedContent};
+
+    fn labelled(content: f32, offset: f32, mark: &str) -> state::Inner {
+        let c = SectionedContent::new();
+        c.set_sections(vec![Section::new(SectionId(0), content)]);
+        c.add_bookmark(SectionId(0), BookmarkText::Text(mark.into()));
+        let mut s = state::Inner::default();
+        s.thumb_label_on = true;
+        s.sections = Some(c);
+        s.feed_pane(
+            Rect::new(0.0, 0.0, 400.0, 1000.0),
+            offset,
+            content,
+            true,
+            0.0,
+        );
+        s
+    }
+
+    #[test]
+    fn the_label_pill_sits_left_of_the_thumb_inside_the_track() {
+        let ctx = DrawContext::default();
+        // A 24 px thumb at the top: centred on it would leave the track.
+        let s = labelled(100_000.0, 0.0, "November 2026");
+        let (pill, alpha) = label_of(&s, &ctx).expect("a label");
+        assert_eq!(alpha, 1.0);
+        let thumb = s.thumb().unwrap();
+        assert_eq!(pill.rect.right(), thumb.x - 8.0);
+        assert_eq!(pill.rect.y, 0.0, "kept in the track");
+        assert!((pill.rect.h - 25.55).abs() < 1e-3);
+        let s = labelled(100_000.0, 99_000.0, "November 2026");
+        let (pill, _) = label_of(&s, &ctx).unwrap();
+        assert!((pill.rect.bottom() - 1000.0).abs() < 1e-3);
+        // Mid-track: centred on the thumb.
+        let s = labelled(4000.0, 1500.0, "x");
+        let (pill, _) = label_of(&s, &ctx).unwrap();
+        let t = s.thumb().unwrap();
+        assert!((pill.rect.y + pill.rect.h * 0.5 - (t.y + t.h * 0.5)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_label_is_cut_to_half_the_track_less_its_padding() {
+        let ctx = DrawContext::default();
+        let s = labelled(4000.0, 0.0, &"y".repeat(100));
+        let (pill, _) = label_of(&s, &ctx).unwrap();
+        assert!(pill.text.ends_with('\u{2026}'), "{}", pill.text);
+        assert!(ctx.text_advance(&pill.text, 13.0) <= 200.0 - 24.0);
+        let s = labelled(4000.0, 0.0, "short");
+        assert_eq!(label_of(&s, &ctx).unwrap().0.text, "short");
+    }
+
+    #[test]
+    fn the_label_draws_one_rounded_box_and_its_text() {
+        let ctx = DrawContext::default();
+        let s = labelled(4000.0, 0.0, "November 2026");
+        let (pill, alpha) = label_of(&s, &ctx).unwrap();
+        let mut list = DrawList::new();
+        bookmarks::draw_label(
+            &mut list,
+            &ctx,
+            &s.resolved,
+            &pill,
+            alpha,
+            #[cfg(feature = "markdown")]
+            None,
+        );
+        // Without an atlas the text is measured, not drawn: one box.
+        assert_eq!(list.instances.len(), 1);
+        let b = list.instances[0];
+        assert!(matches!(b.kind, SdfKind::RoundedBox { radius } if radius == pill.rect.h * 0.5));
+        assert_eq!(b.position, pill.rect.pos());
+        let bg = ctx.theme.bg_color;
+        assert!((b.color[3] - bg[3] * 0.85).abs() < 1e-6);
+        assert_eq!(pill.text, "November 2026");
+    }
+
+    #[test]
+    fn bookmark_sizes_resolve_against_the_theme() {
+        use crate::sections::{BookmarkScale, BookmarkSize};
+        let r = ScrollbarOptions::default().with_theme(&ScrollbarTheme::default());
+        let size = |s| r.bookmark_size(s);
+        assert!((size(BookmarkSize::Themed(BookmarkScale::Small)) - 13.0 * 0.85).abs() < 1e-5);
+        assert_eq!(size(BookmarkSize::Themed(BookmarkScale::Medium)), 13.0);
+        assert!((size(BookmarkSize::Themed(BookmarkScale::Large)) - 13.0 * 1.3).abs() < 1e-5);
+        assert_eq!(size(BookmarkSize::Px(20.0)), 20.0);
+        let d = ScrollbarTheme::default();
+        assert_eq!(
+            (
+                d.thumb_label_font_size,
+                d.thumb_label_pad_x,
+                d.thumb_label_pad_y,
+                d.thumb_label_gap,
+                d.thumb_label_bg_alpha,
+                d.thumb_label_text_alpha
+            ),
+            (13.0, 12.0, 4.0, 8.0, 0.85, 1.0)
+        );
+        assert_eq!((d.thumb_label_bg, d.thumb_label_color), (None, None));
+        assert_eq!(
+            (d.bookmark_scale_small, d.bookmark_scale_large),
+            (0.85, 1.30)
+        );
+        let o = ScrollbarOptions::default();
+        assert!(!o.thumb_label && !o.skip_count);
     }
 }

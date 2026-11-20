@@ -10,7 +10,7 @@ use libmsdf::drawlist::{DrawList, SdfInstance, SdfKind};
 #[cfg(feature = "markdown")]
 use crate::markdown::{MarkdownFaces, MarkdownMeasure, MdRun, MdStyle, draw_run, parse_inline};
 use crate::rect::Rect;
-use crate::sections::{BookmarkText, SectionId};
+use crate::sections::{Bookmark, BookmarkText, SectionId};
 #[cfg(feature = "markdown")]
 use crate::theme::MarkdownOptions;
 use crate::traits::DrawContext;
@@ -29,6 +29,8 @@ pub struct BookmarkPill {
     pub text: String,
     /// Whether it is the one nearest the thumb.
     pub nearest: bool,
+    /// Its font size: the bookmark's size resolved against the theme.
+    pub font_size: f32,
     /// A Markdown bookmark's spans, cut to fit (`text` is their text).
     #[cfg(feature = "markdown")]
     pub(crate) runs: Option<Vec<MdRun>>,
@@ -47,6 +49,18 @@ pub(crate) struct PillMeasure<'a> {
 }
 
 impl<'a> PillMeasure<'a> {
+    /// The same measure at another font size.
+    pub(crate) fn at(&self, size: f32) -> PillMeasure<'a> {
+        PillMeasure {
+            ctx: self.ctx,
+            size,
+            #[cfg(feature = "markdown")]
+            faces: self.faces,
+            #[cfg(feature = "markdown")]
+            code_pad: self.code_pad,
+        }
+    }
+
     pub(crate) fn new(
         ctx: &'a DrawContext<'a>,
         r: &ScrollbarResolved,
@@ -62,7 +76,7 @@ impl<'a> PillMeasure<'a> {
         }
     }
 
-    fn plain(&self, text: &str) -> f32 {
+    pub(crate) fn plain(&self, text: &str) -> f32 {
         self.ctx.text_advance(text, self.size)
     }
 
@@ -87,7 +101,7 @@ impl<'a> PillMeasure<'a> {
     }
 
     #[cfg(feature = "markdown")]
-    fn runs(&self, runs: &[MdRun]) -> f32 {
+    pub(crate) fn runs(&self, runs: &[MdRun]) -> f32 {
         runs.iter().map(|r| self.run(r)).sum()
     }
 }
@@ -121,7 +135,7 @@ pub(crate) fn cut_to_fit(text: &str, max: f32, measure: impl Fn(&str) -> f32) ->
 /// `text`'s first line as inline Markdown spans within `max`, cut with "…"
 /// (counting the visible text) when they do not fit or it has more lines.
 #[cfg(feature = "markdown")]
-fn cut_runs_to_fit(text: &str, max: f32, m: &PillMeasure) -> Vec<MdRun> {
+pub(crate) fn cut_runs_to_fit(text: &str, max: f32, m: &PillMeasure) -> Vec<MdRun> {
     let (first, more) = match text.split_once('\n') {
         Some((first, _)) => (first.trim_end_matches('\r'), true),
         None => (text, false),
@@ -166,15 +180,21 @@ pub(crate) fn layout(
     r: &ScrollbarResolved,
     content: f32,
     thumb_centre: f32,
-    marks: Vec<(SectionId, f32, BookmarkText)>,
+    marks: Vec<(SectionId, f32, Bookmark)>,
     m: &PillMeasure,
 ) -> Vec<BookmarkPill> {
-    let h = r.bookmark_font_size * r.bookmark_line_height + 2.0 * r.bookmark_pad_y;
-    let max_text = (track.w - 2.0 * r.bookmark_side_margin - 2.0 * r.bookmark_pad_x).max(0.0);
     let content = content.max(1.0);
     let mut candidates: Vec<(f32, BookmarkPill)> = marks
         .into_iter()
-        .map(|(id, top, mark)| {
+        .map(|(id, top, bookmark)| {
+            // The pill's size, and its padding and height scaled to match.
+            let fs = r.bookmark_size(bookmark.size);
+            let k = fs / r.bookmark_font_size.max(f32::EPSILON);
+            let (pad_x, pad_y) = (r.bookmark_pad_x * k, r.bookmark_pad_y * k);
+            let h = fs * r.bookmark_line_height + 2.0 * pad_y;
+            let max_text = (track.w - 2.0 * r.bookmark_side_margin - 2.0 * pad_x).max(0.0);
+            let m = &m.at(fs);
+            let mark = bookmark.text;
             let y = track.y + (top / content).clamp(0.0, 1.0) * track.h;
             #[cfg(feature = "markdown")]
             let (text, w, runs) = match &mark {
@@ -195,7 +215,7 @@ pub(crate) fn layout(
                 let w = m.plain(&text);
                 (text, w)
             };
-            let w = w + 2.0 * r.bookmark_pad_x;
+            let w = w + 2.0 * pad_x;
             let rect = Rect::new(track.x + (track.w - w) * 0.5, y - h * 0.5, w, h);
             (
                 (y - thumb_centre).abs(),
@@ -204,27 +224,143 @@ pub(crate) fn layout(
                     rect,
                     text,
                     nearest: false,
+                    font_size: fs,
                     #[cfg(feature = "markdown")]
                     runs,
                 },
             )
         })
         .collect();
-    candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
+    // Largest first, then nearest the thumb first: smaller pills give way
+    // first (the 18:34 EST amendment, item 1).
+    candidates.sort_by(|a, b| {
+        b.1.font_size
+            .total_cmp(&a.1.font_size)
+            .then(a.0.total_cmp(&b.0))
+    });
     let gap = r.bookmark_gap;
-    let mut shown: Vec<BookmarkPill> = Vec::new();
-    for (i, (_, mut pill)) in candidates.into_iter().enumerate() {
+    let mut shown: Vec<(f32, BookmarkPill)> = Vec::new();
+    for (d, pill) in candidates {
         let p = pill.rect;
         let clear = shown
             .iter()
-            .all(|o| p.bottom() + gap <= o.rect.y || p.y >= o.rect.bottom() + gap);
+            .all(|(_, o)| p.bottom() + gap <= o.rect.y || p.y >= o.rect.bottom() + gap);
         if clear {
-            pill.nearest = i == 0;
-            shown.push(pill);
+            shown.push((d, pill));
         }
     }
+    if let Some(near) = shown.iter_mut().min_by(|a, b| a.0.total_cmp(&b.0)) {
+        near.1.nearest = true;
+    }
+    let mut shown: Vec<BookmarkPill> = shown.into_iter().map(|(_, p)| p).collect();
     shown.sort_by(|a, b| a.rect.y.total_cmp(&b.rect.y));
     shown
+}
+
+/// The thumb label as drawn this frame.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LabelPill {
+    pub(crate) id: SectionId,
+    pub(crate) rect: Rect,
+    /// The visible text, cut to fit.
+    pub(crate) text: String,
+    #[cfg(feature = "markdown")]
+    pub(crate) runs: Option<Vec<MdRun>>,
+}
+
+/// Lay the thumb label out: a pill left of `thumb`, its right edge
+/// `thumb_label_gap` left of the thumb's left edge, centred on the thumb
+/// and kept in the track, its text cut with "…" to half the track's width
+/// less the padding.
+pub(crate) fn label_layout(
+    track: Rect,
+    thumb: Rect,
+    r: &ScrollbarResolved,
+    id: SectionId,
+    mark: &BookmarkText,
+    m: &PillMeasure,
+) -> LabelPill {
+    let fs = r.thumb_label_font_size;
+    let m = &m.at(fs);
+    let h = fs * r.bookmark_line_height + 2.0 * r.thumb_label_pad_y;
+    let max_text = (track.w * 0.5 - 2.0 * r.thumb_label_pad_x).max(0.0);
+    #[cfg(feature = "markdown")]
+    let (text, w, runs) = match mark {
+        BookmarkText::Markdown(src) => {
+            let runs = cut_runs_to_fit(src, max_text, m);
+            let text: String = runs.iter().map(|r| r.text.as_str()).collect();
+            (text, m.runs(&runs), Some(runs))
+        }
+        other => {
+            let text = cut_to_fit(other.plain(), max_text, |t| m.plain(t));
+            let w = m.plain(&text);
+            (text, w, None)
+        }
+    };
+    #[cfg(not(feature = "markdown"))]
+    let (text, w) = {
+        let text = cut_to_fit(mark.plain(), max_text, |t| m.plain(t));
+        let w = m.plain(&text);
+        (text, w)
+    };
+    let w = w + 2.0 * r.thumb_label_pad_x;
+    let right = thumb.x - r.thumb_label_gap;
+    let centre = thumb.y + thumb.h * 0.5;
+    let y = (centre - h * 0.5).clamp(track.y, (track.bottom() - h).max(track.y));
+    LabelPill {
+        id,
+        rect: Rect::new(right - w, y, w, h),
+        text,
+        #[cfg(feature = "markdown")]
+        runs,
+    }
+}
+
+/// Draw the thumb label at `alpha`: one rounded box and its text.
+pub(crate) fn draw_label(
+    list: &mut DrawList,
+    ctx: &DrawContext,
+    r: &ScrollbarResolved,
+    pill: &LabelPill,
+    alpha: f32,
+    #[cfg(feature = "markdown")] faces: Option<&MarkdownFaces>,
+) {
+    if alpha <= 0.0 {
+        return;
+    }
+    let mut bg = r.thumb_label_bg.unwrap_or(ctx.theme.bg_color);
+    bg[3] *= r.thumb_label_bg_alpha * alpha;
+    let mut text = r.thumb_label_color.unwrap_or(ctx.theme.text_color);
+    text[3] *= r.thumb_label_text_alpha * alpha;
+    let rect = pill.rect;
+    list.push(SdfInstance {
+        kind: SdfKind::RoundedBox {
+            radius: rect.h * 0.5,
+        },
+        position: rect.pos(),
+        size: rect.size(),
+        color: bg,
+        anim: 0,
+    });
+    let fs = r.thumb_label_font_size;
+    let line = fs * r.bookmark_line_height;
+    let pen = [rect.x + r.thumb_label_pad_x, rect.y + (rect.h - line) * 0.5];
+    #[cfg(feature = "markdown")]
+    if let Some(runs) = &pill.runs {
+        let spans = Spans {
+            r,
+            base: text,
+            fade: 1.0,
+            bg,
+            text,
+            line,
+            size: fs,
+            faces,
+        };
+        spans.draw(list, ctx, runs, pen);
+        return;
+    }
+    ctx.draw_text(list, &pill.text, pen, fs, text);
 }
 
 /// A pill's background and text colours at the bookmarks' `fade`.
@@ -268,8 +404,13 @@ pub(crate) fn draw(
             color: bg,
             anim: 0,
         });
-        let line = r.bookmark_font_size * r.bookmark_line_height;
-        let pen = [rect.x + r.bookmark_pad_x, rect.y + (rect.h - line) * 0.5];
+        let fs = pill.font_size;
+        let k = fs / r.bookmark_font_size.max(f32::EPSILON);
+        let line = fs * r.bookmark_line_height;
+        let pen = [
+            rect.x + r.bookmark_pad_x * k,
+            rect.y + (rect.h - line) * 0.5,
+        ];
         #[cfg(feature = "markdown")]
         if let Some(runs) = &pill.runs {
             let spans = Spans {
@@ -279,12 +420,13 @@ pub(crate) fn draw(
                 bg,
                 text,
                 line,
+                size: fs,
                 faces,
             };
             spans.draw(list, ctx, runs, pen);
             continue;
         }
-        ctx.draw_text(list, &pill.text, pen, r.bookmark_font_size, text);
+        ctx.draw_text(list, &pill.text, pen, fs, text);
     }
 }
 
@@ -297,8 +439,9 @@ struct Spans<'a> {
     /// The pill's background and text colours.
     bg: [f32; 4],
     text: [f32; 4],
-    /// The text's line height.
+    /// The text's line height and size.
     line: f32,
+    size: f32,
     faces: Option<&'a MarkdownFaces>,
 }
 
@@ -321,8 +464,8 @@ impl Spans<'_> {
     }
 
     fn draw(&self, list: &mut DrawList, ctx: &DrawContext, runs: &[MdRun], pen: [f32; 2]) {
-        let m = PillMeasure::new(ctx, self.r, self.faces);
-        let size = self.r.bookmark_font_size;
+        let size = self.size;
+        let m = PillMeasure::new(ctx, self.r, self.faces).at(size);
         let mut x = pen[0];
         for run in runs {
             let w = m.run(run);
@@ -395,6 +538,7 @@ mod tests {
             bg,
             text,
             line: 17.55,
+            size: 13.0,
             faces: None,
         };
         assert_eq!(spans.color(MdStyle::Regular)[3], 0.60);

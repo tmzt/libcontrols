@@ -19,7 +19,7 @@ use crate::flags::NodeFlags;
 use crate::fling::{FlingEvent, FlingOptions, FlingProfile, Gesture, Release, Stop, ease_out};
 use crate::rect::Rect;
 use crate::router::NodeId;
-use crate::scrollbar::{ScrollbarOptions, ScrollbarState, ScrollbarTheme};
+use crate::scrollbar::{LabelFlight, ScrollbarOptions, ScrollbarState, ScrollbarTheme};
 use crate::sections::{SectionId, SectionedContent};
 use crate::theme::ScrollTheme;
 use crate::traits::{DrawContext, DrawControl};
@@ -830,6 +830,8 @@ impl ScrollPane {
             state.with(|s| {
                 s.visibility = options.visibility;
                 s.bookmarks_on = options.bookmarks_on();
+                s.thumb_label_on = options.thumb_label;
+                s.skip_count_on = options.skip_count;
                 s.resolved = options.with_theme(&Default::default());
                 s.sections = self.sections.clone();
             });
@@ -960,12 +962,18 @@ impl ScrollPane {
             return;
         };
         let track = self.viewport.get();
-        let (offset, content, moving, since) = self.state.with(|s| {
+        let (offset, content, moving, since, flight) = self.state.with(|s| {
             (
                 s.offset(),
                 s.content,
                 s.is_dragged() || s.is_coasting(&self.fling_profile(theme)),
                 now - s.last_moved(),
+                s.flight.as_ref().map(|f| LabelFlight {
+                    target: f.end.id,
+                    remaining: f.remaining(),
+                    n: f.n,
+                    dir: f.dir,
+                }),
             )
         });
         let content = content + self.sections.as_ref().map_or(0.0, |c| c.pending_length());
@@ -973,6 +981,7 @@ impl ScrollPane {
         bar.with(|b| {
             b.resolved = resolved;
             b.feed_pane(track, offset, content, moving, since);
+            b.flight = flight;
         });
     }
 

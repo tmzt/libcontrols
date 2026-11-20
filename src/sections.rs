@@ -117,6 +117,85 @@ impl BookmarkText {
     }
 }
 
+/// A bookmark's size as one of the theme's three
+/// ([`ScrollbarTheme`](crate::ScrollbarTheme)'s `bookmark_font_size` for
+/// `Medium`, times `bookmark_scale_small` or `bookmark_scale_large`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum BookmarkScale {
+    Small,
+    Medium,
+    Large,
+}
+
+/// A bookmark pill's size: themed, or exact (as `DrawerSize`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum BookmarkSize {
+    /// One of the theme's sizes (`ControlTheme::scrollbar`).
+    Themed(BookmarkScale),
+    /// The pill's font size in router pixels.
+    Px(f32),
+}
+
+impl Default for BookmarkSize {
+    fn default() -> Self {
+        Self::Themed(BookmarkScale::Medium)
+    }
+}
+
+/// A bookmark: its text and its pill's size. Which sections carry one, at
+/// what size and with what text is the app's; larger pills win when pills
+/// crowd.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct Bookmark {
+    pub text: BookmarkText,
+    pub size: BookmarkSize,
+}
+
+impl Bookmark {
+    /// A `Medium` bookmark.
+    pub fn new(text: BookmarkText) -> Self {
+        Self {
+            text,
+            size: BookmarkSize::default(),
+        }
+    }
+
+    /// The same bookmark at `size`.
+    #[must_use]
+    pub fn size(mut self, size: BookmarkSize) -> Self {
+        self.size = size;
+        self
+    }
+}
+
+/// What the thumb label is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LabelPurpose {
+    /// The section at the window's top, while scrolling.
+    Top,
+    /// A counted flight's target, from its release to its landing.
+    Target,
+}
+
+/// Where a thumb label is, for the app's formatter
+/// ([`SectionedContent::set_label_format`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct LabelRequest {
+    /// The section the label is for.
+    pub section: SectionId,
+    /// Its place in the list.
+    pub index: usize,
+    pub purpose: LabelPurpose,
+}
+
+/// The app's thumb-label formatter.
+pub type LabelFormat = Arc<dyn Fn(&LabelRequest) -> BookmarkText + Send + Sync>;
+
 /// What a section is drawn with: its id, its place in the list, the width
 /// it is drawn at, and the context (atlas, shaper, theme) of the frame.
 #[non_exhaustive]
@@ -328,7 +407,9 @@ struct Inner {
     /// `tops[i]` is the offset of `sections[i]`; one more entry, the total.
     tops: Vec<f32>,
     index: HashMap<SectionId, usize>,
-    bookmarks: HashMap<SectionId, BookmarkText>,
+    bookmarks: HashMap<SectionId, Bookmark>,
+    /// The app's thumb-label formatter.
+    label_format: Option<LabelFormat>,
     source: Option<Arc<dyn SectionSource + Send + Sync>>,
     cache: HashMap<SectionId, CacheEntry>,
     settings: CacheSettings,
@@ -639,12 +720,17 @@ impl SectionEdit<'_> {
 
     /// Bookmark section `id` in this batch, replacing any bookmark it had.
     pub fn add_bookmark(&mut self, id: SectionId, text: BookmarkText) {
-        self.inner.bookmarks.insert(id, text);
+        self.inner.bookmarks.insert(id, Bookmark::new(text));
     }
 
     /// Remove section `id`'s bookmark in this batch, returning it.
     pub fn remove_bookmark(&mut self, id: SectionId) -> Option<BookmarkText> {
-        self.inner.bookmarks.remove(&id)
+        self.inner.bookmarks.remove(&id).map(|b| b.text)
+    }
+
+    /// Bookmark section `id` with a size in this batch.
+    pub fn add_bookmark_with(&mut self, id: SectionId, bookmark: Bookmark) {
+        self.inner.bookmarks.insert(id, bookmark);
     }
 }
 
@@ -924,16 +1010,100 @@ impl SectionedContent {
         self.with(|s| s.settings.max_cached = n);
     }
 
-    /// Bookmark the section `id`, replacing any bookmark it had.
+    /// Bookmark the section `id` at `Medium` size, replacing any bookmark
+    /// it had.
     pub fn add_bookmark(&self, id: SectionId, text: BookmarkText) {
+        self.add_bookmark_with(id, Bookmark::new(text));
+    }
+
+    /// Bookmark the section `id` with a size, replacing any bookmark it
+    /// had.
+    pub fn add_bookmark_with(&self, id: SectionId, bookmark: Bookmark) {
         self.with(|s| {
-            s.bookmarks.insert(id, text);
+            s.bookmarks.insert(id, bookmark);
         });
     }
 
-    /// Remove the section's bookmark, returning it.
+    /// Remove the section's bookmark, returning its text.
     pub fn remove_bookmark(&self, id: SectionId) -> Option<BookmarkText> {
-        self.with(|s| s.bookmarks.remove(&id))
+        self.with(|s| s.bookmarks.remove(&id).map(|b| b.text))
+    }
+
+    /// Every bookmark with its size, in section order; those on ids with no
+    /// section follow, by id.
+    pub fn bookmarks_with(&self) -> Vec<(SectionId, Bookmark)> {
+        self.with(|s| {
+            let mut all: Vec<(Option<usize>, SectionId, Bookmark)> = s
+                .bookmarks
+                .iter()
+                .map(|(&id, b)| (s.index.get(&id).copied(), id, b.clone()))
+                .collect();
+            all.sort_by(|a, b| match (a.0, b.0) {
+                (Some(x), Some(y)) => x.cmp(&y),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.1.cmp(&b.1),
+            });
+            all.into_iter().map(|(_, id, b)| (id, b)).collect()
+        })
+    }
+
+    /// Format the thumb label with `f` (see [`LabelRequest`]), or (`None`)
+    /// show the bookmark of the last bookmarked section at or above the
+    /// section the label is for. `f` is called without the content's lock
+    /// held, so it may read this content.
+    pub fn set_label_format(&self, f: Option<LabelFormat>) {
+        self.with(|s| s.label_format = f);
+    }
+
+    /// The thumb label for the window's top at `offset` (`target`: `None`),
+    /// or for a counted flight's `target`: the section it names and its
+    /// text.
+    pub(crate) fn label_for(
+        &self,
+        offset: f32,
+        target: Option<SectionId>,
+    ) -> Option<(SectionId, BookmarkText)> {
+        let (format, section, index, mark) = self.with(|s| {
+            if s.sections.is_empty() {
+                return None;
+            }
+            let (index, purpose_point) = match target {
+                Some(id) => {
+                    let i = *s.index.get(&id)?;
+                    (i, s.tops[i] + 0.5)
+                }
+                None => {
+                    let at = offset.clamp(0.0, s.total());
+                    let i = s.tops[..s.sections.len()].partition_point(|&t| t <= at + 0.5);
+                    (i.saturating_sub(1), at + 0.5)
+                }
+            };
+            // The last bookmarked section at or above the point.
+            let mark = s
+                .bookmarks
+                .iter()
+                .filter_map(|(&id, b)| s.offset_of(id).map(|t| (t, id, b.text.clone())))
+                .filter(|&(t, _, _)| t <= purpose_point)
+                .max_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
+                .map(|(_, id, t)| (id, t));
+            Some((s.label_format.clone(), s.sections[index].id, index, mark))
+        })?;
+        match format {
+            Some(f) => {
+                let request = LabelRequest {
+                    section,
+                    index,
+                    purpose: if target.is_some() {
+                        LabelPurpose::Target
+                    } else {
+                        LabelPurpose::Top
+                    },
+                };
+                Some((section, f(&request)))
+            }
+            None => mark,
+        }
     }
 
     /// Remove every bookmark.
@@ -944,20 +1114,10 @@ impl SectionedContent {
     /// The bookmarks, in section order; those on ids with no section follow,
     /// by id.
     pub fn bookmarks(&self) -> Vec<(SectionId, BookmarkText)> {
-        self.with(|s| {
-            let mut all: Vec<(Option<usize>, SectionId, BookmarkText)> = s
-                .bookmarks
-                .iter()
-                .map(|(&id, t)| (s.index.get(&id).copied(), id, t.clone()))
-                .collect();
-            all.sort_by(|a, b| match (a.0, b.0) {
-                (Some(x), Some(y)) => x.cmp(&y),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => a.1.cmp(&b.1),
-            });
-            all.into_iter().map(|(_, id, t)| (id, t)).collect()
-        })
+        self.bookmarks_with()
+            .into_iter()
+            .map(|(id, b)| (id, b.text))
+            .collect()
     }
 
     /// The sections overlapping `start..end`, with their tops (a pane's
@@ -1218,9 +1378,9 @@ impl SectionedContent {
     }
 
     /// The bookmarks whose section exists, with that section's top.
-    pub(crate) fn placed_bookmarks(&self) -> Vec<(SectionId, f32, BookmarkText)> {
+    pub(crate) fn placed_bookmarks(&self) -> Vec<(SectionId, f32, Bookmark)> {
         self.with(|s| {
-            let mut v: Vec<(SectionId, f32, BookmarkText)> = s
+            let mut v: Vec<(SectionId, f32, Bookmark)> = s
                 .bookmarks
                 .iter()
                 .filter_map(|(&id, t)| s.offset_of(id).map(|top| (id, top, t.clone())))

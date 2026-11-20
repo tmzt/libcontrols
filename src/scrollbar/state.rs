@@ -4,7 +4,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use crate::rect::Rect;
-use crate::sections::{SectionId, SectionedContent};
+use crate::sections::{BookmarkText, SectionId, SectionedContent};
 
 use super::{ScrollbarEvent, ScrollbarResolved, ScrollbarTheme, ScrollbarVisibility};
 
@@ -51,12 +51,25 @@ fn hold_then_fade(since: f64, hold: f32, fade: f32) -> f32 {
     }
 }
 
+/// A counted flight, as the label reads it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct LabelFlight {
+    pub(crate) target: SectionId,
+    pub(crate) remaining: u32,
+    pub(crate) n: u32,
+    pub(crate) dir: f32,
+}
+
 #[derive(Debug)]
 pub(crate) struct Inner {
     pub(crate) track: Rect,
     pub(crate) resolved: ScrollbarResolved,
     pub(crate) visibility: ScrollbarVisibility,
     pub(crate) bookmarks_on: bool,
+    pub(crate) thumb_label_on: bool,
+    pub(crate) skip_count_on: bool,
+    /// A counted flight on the pane, if one is in progress.
+    pub(crate) flight: Option<LabelFlight>,
     pub(crate) offset: f32,
     pub(crate) content: f32,
     pub(crate) window: f32,
@@ -85,6 +98,9 @@ impl Default for Inner {
             resolved: super::ScrollbarOptions::default().with_theme(&ScrollbarTheme::default()),
             visibility: ScrollbarVisibility::default(),
             bookmarks_on: true,
+            thumb_label_on: false,
+            skip_count_on: false,
+            flight: None,
             offset: 0.0,
             content: 0.0,
             window: 0.0,
@@ -165,6 +181,60 @@ impl Inner {
     pub(crate) fn busy(&self) -> bool {
         (self.visibility == ScrollbarVisibility::OnScroll && self.alpha() > 0.0)
             || (self.bookmarks_on && self.bookmarks_alpha() > 0.0)
+            || self.label_alpha() > 0.0
+    }
+
+    /// How visible the thumb label is, 0 to 1: whole during a counted
+    /// flight under every visibility; otherwise, while the thumb is shown
+    /// and not held, whole while scrolling and `hold` after, then fading
+    /// over `fade` (with `OnScroll`, the thumb's alpha over the resolved
+    /// alpha).
+    pub(crate) fn label_alpha(&self) -> f32 {
+        if !self.thumb_label_on || self.sections.is_none() {
+            return 0.0;
+        }
+        if self.flight.is_some() {
+            return 1.0;
+        }
+        if self.grab.is_some()
+            || self.visibility == ScrollbarVisibility::None
+            || self.thumb().is_none()
+        {
+            return 0.0;
+        }
+        if self.scrolling {
+            return 1.0;
+        }
+        hold_then_fade(
+            self.now - self.last_active,
+            self.resolved.hold,
+            self.resolved.fade,
+        )
+    }
+
+    /// The label's section and text when it is drawn: the counted
+    /// flight's target, or the window's top, formatted by the app or the
+    /// last bookmark at or above; with `skip_count`, the boundaries still
+    /// to pass after it.
+    pub(crate) fn label(&self) -> Option<(SectionId, BookmarkText)> {
+        if self.label_alpha() <= 0.0 {
+            return None;
+        }
+        let sections = self.sections.as_ref()?;
+        let (id, mut text) = sections.label_for(self.offset, self.flight.map(|f| f.target))?;
+        if let Some(f) = self.flight
+            && self.skip_count_on
+            && f.n > 1
+            && f.remaining > 0
+        {
+            let arrow = if f.dir > 0.0 { '\u{2193}' } else { '\u{2191}' };
+            let more = format!(" {arrow} {}", f.remaining);
+            text = match text {
+                BookmarkText::Text(s) => BookmarkText::Text(s + &more),
+                BookmarkText::Markdown(s) => BookmarkText::Markdown(s + &more),
+            };
+        }
+        Some((id, text))
     }
 
     /// The section at `offset` and the bookmark nearest the thumb, when
@@ -406,6 +476,18 @@ impl ScrollbarState {
     /// The bookmarks' opacity, 0 to 1.
     pub fn bookmarks_alpha(&self) -> f32 {
         self.with(|s| s.bookmarks_alpha())
+    }
+
+    /// The label the thumb shows now, if any (with
+    /// [`ScrollbarOptions::thumb_label`](super::ScrollbarOptions::thumb_label)):
+    /// the section it names and its text.
+    pub fn thumb_label(&self) -> Option<(SectionId, BookmarkText)> {
+        self.with(|s| s.label())
+    }
+
+    /// The thumb label's opacity, 0 to 1.
+    pub fn thumb_label_alpha(&self) -> f32 {
+        self.with(|s| s.label_alpha())
     }
 
     /// A press at `pos`, in the track's coordinates (those its `Rect` is

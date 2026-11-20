@@ -602,3 +602,290 @@ fn a_horizontal_pane_keeps_its_indicator() {
         .with_scrollbar(ScrollbarOptions::default());
     assert!(pane.scrollbar().is_none());
 }
+
+// ---- Plan 20261119_01, step 6: the thumb label and bookmark sizes ----
+
+use libcontrols::{
+    Bookmark, BookmarkScale, BookmarkSize, Boundaries, FlingOptions, FlingStop, LabelPurpose,
+    LabelRequest, SkipMapping,
+};
+
+struct Labelled {
+    router: Router,
+    pane: libcontrols::NodeId,
+    content: Arc<SectionedContent>,
+}
+
+impl Labelled {
+    fn new(options: ScrollbarOptions, content: Arc<SectionedContent>, fling: FlingOptions) -> Self {
+        let mut router = Router::new();
+        let pane = router.add(
+            None,
+            ScrollPane::new(TRACK, ScrollAxis::Vertical)
+                .with_scrollbar(options.thumb_label(true))
+                .with_sections(content.clone())
+                .with_fling(fling),
+        );
+        render(&router);
+        Self {
+            router,
+            pane,
+            content,
+        }
+    }
+
+    fn bar(&self) -> &Arc<ScrollbarState> {
+        self.router
+            .get::<ScrollPane>(self.pane)
+            .unwrap()
+            .scrollbar()
+            .unwrap()
+    }
+
+    fn label(&self) -> Option<String> {
+        self.bar().thumb_label().map(|(_, t)| match t {
+            BookmarkText::Text(s) | BookmarkText::Markdown(s) => s,
+            _ => String::new(),
+        })
+    }
+
+    fn at(&self, offset: f32) -> Option<String> {
+        self.router.scroll_to(self.pane, [0.0, offset]);
+        render(&self.router);
+        self.label()
+    }
+
+    fn offset(&self) -> f32 {
+        self.router
+            .get::<ScrollPane>(self.pane)
+            .unwrap()
+            .state()
+            .offset()[1]
+    }
+}
+
+fn labelled(options: ScrollbarOptions) -> Labelled {
+    Labelled::new(options, ten(), FlingOptions::default())
+}
+
+#[test]
+fn the_label_is_the_last_bookmark_at_or_above_the_windows_top() {
+    let l = labelled(ScrollbarOptions::default());
+    assert_eq!(l.label(), None, "not scrolled yet");
+    assert_eq!(l.at(1599.0).as_deref(), Some("Section 0"));
+    assert_eq!(
+        l.at(1600.0).as_deref(),
+        Some("Section 4"),
+        "at the boundary"
+    );
+    assert_eq!(l.at(1601.0).as_deref(), Some("Section 4"));
+    assert_eq!(l.at(1999.0).as_deref(), Some("Section 4"));
+    assert_eq!(l.at(2000.0).as_deref(), Some("Section 5"));
+    assert_eq!(l.at(1500.0).as_deref(), Some("Section 0"), "and back up");
+    // Above the first bookmarked section there is none.
+    let c = ten();
+    c.remove_bookmark(SectionId(0));
+    let l = Labelled::new(ScrollbarOptions::default(), c, FlingOptions::default());
+    assert_eq!(l.at(100.0), None);
+    assert_eq!(l.at(1700.0).as_deref(), Some("Section 4"));
+}
+
+#[test]
+fn the_label_shows_while_scrolling_holds_two_seconds_and_fades() {
+    let l = labelled(ScrollbarOptions::default());
+    l.at(1700.0);
+    assert_eq!(l.bar().thumb_label_alpha(), 1.0);
+    l.router.advance(1.9);
+    assert_eq!(l.bar().thumb_label_alpha(), 1.0);
+    l.router.advance(0.25);
+    let a = l.bar().thumb_label_alpha();
+    assert!((a - 0.5).abs() < 0.02, "{a}");
+    l.router.advance(0.2);
+    assert_eq!(l.bar().thumb_label_alpha(), 0.0);
+    assert_eq!(l.label(), None);
+}
+
+#[test]
+fn the_label_is_not_drawn_while_the_thumb_is_held() {
+    let l = labelled(ScrollbarOptions::default());
+    l.at(0.0);
+    l.router.scroll_to(l.pane, [0.0, 10.0]);
+    render(&l.router);
+    assert!(l.label().is_some());
+    down(&l.router, [394.0, 20.0]);
+    assert!(l.bar().is_held());
+    assert_eq!(l.label(), None);
+    let list = render(&l.router);
+    assert_eq!(pills(&list).len(), 3, "the bookmarks as before");
+    l.router.deliver_mouse(MouseEvent::Up {
+        pos: [394.0, 20.0],
+        button: LEFT,
+    });
+    assert!(l.label().is_some(), "shown again after release");
+}
+
+#[test]
+fn under_always_the_label_shows_only_while_scrolling_and_hold_after() {
+    let l = labelled(ScrollbarOptions::default().visibility(ScrollbarVisibility::Always));
+    assert_eq!(l.label(), None, "at rest");
+    l.at(1700.0);
+    assert!(l.label().is_some());
+    l.router.advance(2.5);
+    assert_eq!(l.label(), None);
+    assert_eq!(thumbs(&render(&l.router)).len(), 1, "the thumb stays");
+}
+
+#[test]
+fn a_formatter_names_the_top_and_the_target() {
+    let c = ten();
+    c.set_label_format(Some(Arc::new(|r: &LabelRequest| {
+        let p = match r.purpose {
+            LabelPurpose::Top => "top",
+            LabelPurpose::Target => "target",
+            _ => "?",
+        };
+        BookmarkText::Text(format!("{p} {} at {}", r.section.0, r.index))
+    })));
+    let l = Labelled::new(
+        ScrollbarOptions::default().skip_count(true),
+        c,
+        FlingOptions::new().stop(FlingStop::count(
+            Boundaries::Sections,
+            SkipMapping::default(),
+        )),
+    );
+    assert_eq!(l.at(2450.0).as_deref(), Some("top 6 at 6"));
+    // A counted flick from 6: 3000 px/s passes 4; the label names the
+    // target from release to landing, with the boundaries still to pass.
+    let r = &l.router;
+    r.deliver_mouse(MouseEvent::Down {
+        pos: [100.0, 500.0],
+        button: LEFT,
+    });
+    let mut y = 500.0;
+    for _ in 0..2 {
+        r.advance(0.016);
+        y += 48.0;
+        drag(r, [100.0, 500.0], [100.0, y]);
+    }
+    r.deliver_mouse(MouseEvent::Up {
+        pos: [100.0, y],
+        button: LEFT,
+    });
+    render(r);
+    let first = l.label().expect("a target label");
+    assert!(first.starts_with("target "), "{first}");
+    let target: u64 = first.split(' ').nth(1).unwrap().parse().unwrap();
+    let mut seen = vec![first.clone()];
+    while l
+        .router
+        .get::<ScrollPane>(l.pane)
+        .unwrap()
+        .state()
+        .flight()
+        .is_some()
+    {
+        r.advance(1.0 / 60.0);
+        render(r);
+        let now = l.label().unwrap();
+        if seen.last() != Some(&now) {
+            seen.push(now);
+        }
+    }
+    // The frame it lands on names the top section again.
+    assert_eq!(seen.pop(), Some(format!("top {target} at {target}")));
+    let name = format!("target {target} at {target}");
+    let arrows: Vec<&str> = seen.iter().map(|s| &s[name.len()..]).collect();
+    assert_eq!(
+        arrows,
+        [
+            " \u{2191} 4",
+            " \u{2191} 3",
+            " \u{2191} 2",
+            " \u{2191} 1",
+            ""
+        ],
+        "counting down"
+    );
+    // Landed: the section at the top again, held then faded.
+    assert_eq!(l.label(), Some(format!("top {target} at {target}")));
+    assert_eq!(l.offset(), l.content.offset_of(SectionId(target)).unwrap());
+}
+
+/// A standalone bar over `marks` (section, top, size) in 10 000 of content.
+fn sized(marks: &[(u64, f32, BookmarkSize)]) -> Standalone {
+    let c = SectionedContent::new();
+    let mut tops: Vec<f32> = marks.iter().map(|m| m.1).collect();
+    tops.sort_by(f32::total_cmp);
+    let mut list = Vec::new();
+    let mut at = 0.0;
+    for (i, &(id, top, _)) in marks.iter().enumerate() {
+        let _ = i;
+        if top > at {
+            list.push(Section::new(SectionId(10_000 + id), top - at));
+        }
+        let next = tops.iter().find(|&&t| t > top).copied().unwrap_or(10_000.0);
+        list.push(Section::new(SectionId(id), next - top));
+        at = next;
+    }
+    c.set_sections(list);
+    for &(id, _, size) in marks {
+        c.add_bookmark_with(
+            SectionId(id),
+            Bookmark::new(BookmarkText::Text(format!("b{id}"))).size(size),
+        );
+    }
+    let f = standalone_with(ScrollbarOptions::default(), Some(c));
+    f.bar.set_metrics(0.0, 10_000.0, 1000.0);
+    down(&f.router, [394.0, 50.0]);
+    f
+}
+
+#[test]
+fn bookmark_sizes_draw_at_their_scale_with_padding_to_match() {
+    let small = BookmarkSize::Themed(BookmarkScale::Small);
+    let large = BookmarkSize::Themed(BookmarkScale::Large);
+    let medium = BookmarkSize::default();
+    let f = sized(&[
+        (0, 1000.0, small),
+        (1, 3000.0, medium),
+        (2, 5000.0, large),
+        (3, 7000.0, BookmarkSize::Px(20.0)),
+    ]);
+    let layout = f.layout();
+    assert_eq!(layout.len(), 4);
+    for (p, fs) in layout.iter().zip([13.0 * 0.85, 13.0, 13.0 * 1.3, 20.0]) {
+        assert!((p.font_size - fs).abs() < 1e-4, "{p:?}");
+        let k = fs / 13.0;
+        assert!((p.rect.h - (fs * 1.35 + 8.0 * k)).abs() < 1e-3, "{p:?}");
+        let text = DrawContext::default().text_advance(&p.text, fs);
+        assert!((p.rect.w - (text + 24.0 * k)).abs() < 1e-3, "{p:?}");
+    }
+    // Medium is 0.11.0's pill exactly.
+    assert!((layout[1].rect.h - 25.55).abs() < 1e-4);
+    assert_eq!(
+        Bookmark::new(BookmarkText::Text("x".into())).size,
+        BookmarkSize::Themed(BookmarkScale::Medium)
+    );
+}
+
+#[test]
+fn crowded_pills_give_way_smaller_first_then_farther_first() {
+    let small = BookmarkSize::Themed(BookmarkScale::Small);
+    let large = BookmarkSize::Themed(BookmarkScale::Large);
+    // 2000 and 2100 are 10 px apart on the track: one survives.
+    let f = sized(&[(0, 2000.0, small), (1, 2100.0, large)]);
+    let ids: Vec<SectionId> = f.layout().iter().map(|p| p.id).collect();
+    assert_eq!(ids, [SectionId(1)], "the larger, though farther");
+    let f = sized(&[(0, 2000.0, large), (1, 2100.0, small)]);
+    let ids: Vec<SectionId> = f.layout().iter().map(|p| p.id).collect();
+    assert_eq!(ids, [SectionId(0)]);
+    // Equal sizes: the nearest the thumb (centre near 50 on the track).
+    let f = sized(&[(0, 2000.0, large), (1, 2100.0, large)]);
+    let layout = f.layout();
+    assert_eq!(
+        layout.iter().map(|p| p.id).collect::<Vec<_>>(),
+        [SectionId(0)]
+    );
+    assert!(layout[0].nearest);
+}
