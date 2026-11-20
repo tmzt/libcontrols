@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 
 use libmsdf::drawlist::DrawList;
 
+use crate::fling::{Boundaries, Stop, Target};
 use crate::theme::ControlTheme;
 use crate::traits::DrawContext;
 
@@ -1141,6 +1142,78 @@ impl SectionedContent {
                 s.cache.remove(&id);
             }
             s.prune_cache();
+        })
+    }
+
+    /// The tops of `b`'s sections, in order: `(id, index, top)`.
+    pub(crate) fn boundary_tops(&self, b: Boundaries) -> Vec<(SectionId, usize, f32)> {
+        self.with(|s| {
+            s.sections
+                .iter()
+                .enumerate()
+                .filter(|(_, sec)| match b {
+                    Boundaries::Sections => true,
+                    Boundaries::AtMost(n) => sec.level <= n,
+                    Boundaries::Bookmarked => s.bookmarks.contains_key(&sec.id),
+                })
+                .map(|(i, sec)| (sec.id, i, s.tops[i]))
+                .collect()
+        })
+    }
+
+    /// Where `target` is now, for a fling moving `dir` (+1 towards the
+    /// end): a split or merged section's place goes to its replacement, a
+    /// removed one's to the next section still present that way, or the
+    /// end. `None` when the list is empty.
+    pub(crate) fn locate(&self, target: Target, dir: f32) -> Option<Stop> {
+        self.with(|s| {
+            let n = s.sections.len();
+            if n == 0 {
+                return None;
+            }
+            let end = |s: &Inner, t: Target| match t {
+                Target::Start => Stop {
+                    target: Target::Start,
+                    top: 0.0,
+                    id: s.sections[0].id,
+                },
+                _ => Stop {
+                    target: Target::End,
+                    top: s.total(),
+                    id: s.sections[n - 1].id,
+                },
+            };
+            let at = |s: &Inner, i: usize| Stop {
+                target: Target::Section {
+                    id: s.sections[i].id,
+                    index: i,
+                },
+                top: s.tops[i],
+                id: s.sections[i].id,
+            };
+            Some(match target {
+                Target::Start | Target::End => end(s, target),
+                Target::Section { id, index } => {
+                    if let Some(&i) = s.index.get(&id) {
+                        at(s, i)
+                    } else if let Some(&i) =
+                        s.replaced.get(&id).and_then(|(new, _)| s.index.get(new))
+                    {
+                        at(s, i)
+                    } else {
+                        let k = if dir > 0.0 {
+                            Some(index)
+                        } else {
+                            index.checked_sub(1)
+                        };
+                        match k.filter(|&k| k < n) {
+                            Some(k) => at(s, k),
+                            None if dir > 0.0 => end(s, Target::End),
+                            None => end(s, Target::Start),
+                        }
+                    }
+                }
+            })
         })
     }
 

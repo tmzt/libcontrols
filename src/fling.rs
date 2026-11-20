@@ -609,8 +609,25 @@ pub enum FlingEvent {
     Landed { id: SectionId },
 }
 
+/// Where a fling or flight ends: a section's top, held by id with its
+/// last known place in the list, or an end of the range.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Target {
+    Section { id: SectionId, index: usize },
+    Start,
+    End,
+}
+
+/// A target resolved this frame: what it is now, its top, and the section
+/// it names (an end names its end's section).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Stop {
+    pub(crate) target: Target,
+    pub(crate) top: f32,
+    pub(crate) id: SectionId,
+}
+
 /// The cubic ease-out of a counted flight.
-#[cfg_attr(not(test), allow(dead_code))] // until counted flights (step 5)
 pub(crate) fn ease_out(x: f32) -> f32 {
     let u = 1.0 - x.clamp(0.0, 1.0);
     1.0 - u * u * u

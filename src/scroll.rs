@@ -16,7 +16,7 @@ use libmsdf::drawlist::{DrawList, SdfInstance, SdfKind};
 use crate::control::HostedControl;
 use crate::event::{ControlAction, ControlPart, EventContext, KeyboardEvent, MouseEvent};
 use crate::flags::NodeFlags;
-use crate::fling::{FlingOptions, FlingProfile, Gesture, Release};
+use crate::fling::{FlingEvent, FlingOptions, FlingProfile, Gesture, Release, Stop, ease_out};
 use crate::rect::Rect;
 use crate::router::NodeId;
 use crate::scrollbar::{ScrollbarOptions, ScrollbarState, ScrollbarTheme};
@@ -108,6 +108,61 @@ struct DragTrack {
     carried: f32,
 }
 
+/// A counted flick's flight: an ease-out onto its target's top, passing
+/// `path`'s boundaries (the target last when it is a section).
+#[derive(Clone, Debug)]
+pub(crate) struct Flight {
+    pub(crate) end: Stop,
+    /// The signed distance from the release offset to the target's top
+    /// then.
+    d0: f32,
+    t: f32,
+    duration: f32,
+    /// The boundaries to pass and their tops this frame (`None`: gone).
+    pub(crate) path: Vec<(SectionId, usize, Option<f32>)>,
+    passed: usize,
+    /// How many boundaries it passes in all.
+    pub(crate) n: u32,
+    /// +1 towards the end of the axis, -1 towards its start.
+    pub(crate) dir: f32,
+}
+
+impl Flight {
+    /// A flight from `offset` onto `end` in a range up to `max`.
+    pub(crate) fn new(
+        end: Stop,
+        offset: f32,
+        max: f32,
+        duration: f32,
+        path: Vec<(SectionId, usize, Option<f32>)>,
+        n: u32,
+        dir: f32,
+    ) -> Self {
+        Self {
+            end,
+            d0: end.top.clamp(0.0, max) - offset,
+            t: 0.0,
+            duration: duration.max(f32::EPSILON),
+            path,
+            passed: 0,
+            n,
+            dir,
+        }
+    }
+
+    /// Boundaries still to pass.
+    pub(crate) fn remaining(&self) -> u32 {
+        self.n.saturating_sub(self.passed as u32)
+    }
+}
+
+/// A distance fling whose end moved to a boundary.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Landing {
+    pub(crate) end: Stop,
+    pub(crate) dir: f32,
+}
+
 /// Where a pane's press began, for its release.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub(crate) struct PressStart {
@@ -148,6 +203,13 @@ pub(crate) struct Inner {
     pub(crate) held_shift: f32,
     /// When it last moved, on router time.
     last_moved: f64,
+    /// A counted flight, or a distance fling's landing, in progress.
+    pub(crate) flight: Option<Flight>,
+    pub(crate) landing: Option<Landing>,
+    /// The flight a touch-down stopped: its direction and the boundaries
+    /// it still had to pass, for a flick that adds to it.
+    pub(crate) carried_flight: Option<(f32, u32, SectionId)>,
+    pub(crate) fling_events: Vec<FlingEvent>,
 }
 
 impl Default for Inner {
@@ -169,6 +231,10 @@ impl Default for Inner {
             section_anchors: Vec::new(),
             held_shift: 0.0,
             last_moved: f64::NEG_INFINITY,
+            flight: None,
+            landing: None,
+            carried_flight: None,
+            fling_events: Vec::new(),
         }
     }
 }
@@ -227,7 +293,39 @@ impl Inner {
 
     /// Whether a fling or a spring is moving it.
     pub(crate) fn is_coasting(&self, p: &FlingProfile) -> bool {
-        self.fling.abs() >= p.min_speed || self.over != 0.0 || self.over_vel != 0.0
+        self.fling.abs() >= p.min_speed
+            || self.flight.is_some()
+            || self.over != 0.0
+            || self.over_vel != 0.0
+    }
+
+    pub(crate) fn fling(&self) -> f32 {
+        self.fling
+    }
+
+    /// Start a distance fling at `speed` along `dir` that lands on `end`.
+    pub(crate) fn start_landing(&mut self, end: Stop, dir: f32, speed: f32) {
+        self.fling = -dir * speed;
+        self.landing = Some(Landing { end, dir });
+    }
+
+    /// Start a counted flight.
+    pub(crate) fn start_flight(&mut self, flight: Flight, now: f64) {
+        self.fling = 0.0;
+        self.landing = None;
+        self.flight = Some(flight);
+        self.moved(now);
+    }
+
+    /// The fling ended on `end`.
+    fn land(&mut self, end: Stop) {
+        self.offset = end.top.clamp(0.0, self.max);
+        self.wanted = self.offset;
+        self.fling = 0.0;
+        self.landing = None;
+        self.flight = None;
+        self.fling_events.push(FlingEvent::Landed { id: end.id });
+        self.update_following();
     }
 
     /// The range: the content's length and the largest offset. A following
@@ -254,6 +352,8 @@ impl Inner {
     pub(crate) fn scroll_to(&mut self, offset: f32, now: f64) {
         let before = self.offset;
         self.fling = 0.0;
+        self.flight = None;
+        self.landing = None;
         self.over = 0.0;
         self.over_raw = 0.0;
         self.over_vel = 0.0;
@@ -282,6 +382,9 @@ impl Inner {
     ) {
         let carried = self.fling;
         self.fling = 0.0;
+        // A touch-down stops a flight, as it stops a fling.
+        self.carried_flight = self.flight.take().map(|f| (f.dir, f.remaining(), f.end.id));
+        self.landing = None;
         self.over_vel = 0.0;
         // A finger that catches a springing overscroll holds it where it is:
         // the finger travel that would draw it, by the inverse resistance.
@@ -433,6 +536,9 @@ impl Inner {
             self.moved(now);
             return true;
         }
+        if self.flight.is_some() {
+            return self.fly(dt, now);
+        }
         if self.fling == 0.0 {
             return false;
         }
@@ -441,6 +547,19 @@ impl Inner {
         self.offset = target.clamp(0.0, self.max);
         self.wanted = self.offset;
         self.update_following();
+        if let Some(l) = self.landing {
+            let goal = l.end.top.clamp(0.0, self.max);
+            let next = self.fling * (-p.decay * dt).exp();
+            if l.dir * (self.offset - goal) >= -0.5 || next.abs() < p.min_speed {
+                self.land(l.end);
+            } else {
+                self.fling = next;
+            }
+            if self.offset != before {
+                self.moved(now);
+            }
+            return self.offset != before;
+        }
         let past_end = target != self.offset;
         if past_end && limit.is_some() && !self.following {
             // Into the end with speed left: it carries into the spring.
@@ -457,6 +576,43 @@ impl Inner {
             self.moved(now);
         }
         self.offset != before
+    }
+
+    /// A counted flight's frame: the ease-out onto the target's top this
+    /// frame, the boundaries it crosses, and the landing.
+    fn fly(&mut self, dt: f32, now: f64) -> bool {
+        let Some(mut f) = self.flight.take() else {
+            return false;
+        };
+        let before = self.offset;
+        f.t += dt;
+        let x = (f.t / f.duration).min(1.0);
+        let goal = f.end.top.clamp(0.0, self.max);
+        self.offset = (goal - (1.0 - ease_out(x)) * f.d0).clamp(0.0, self.max);
+        let landed = x >= 1.0;
+        while f.passed < f.path.len() {
+            let (id, _, top) = f.path[f.passed];
+            match top {
+                None => f.passed += 1,
+                Some(t) if landed || f.dir * (self.offset - t.min(self.max)) >= -0.5 => {
+                    f.passed += 1;
+                    let remaining = f.remaining();
+                    self.fling_events.push(FlingEvent::Passed { id, remaining });
+                }
+                Some(_) => break,
+            }
+        }
+        if landed {
+            self.land(f.end);
+        } else {
+            self.wanted = self.offset;
+            self.update_following();
+            self.flight = Some(f);
+        }
+        if self.offset != before {
+            self.moved(now);
+        }
+        true
     }
 
     /// How visible the indicator is at `now`, 0 to 1.
@@ -546,7 +702,26 @@ impl ScrollState {
 
     /// Whether a drag, a fling or an overscroll spring is moving it.
     pub fn is_moving(&self) -> bool {
-        self.with(|s| s.drag.is_some() || s.fling != 0.0 || s.over != 0.0 || s.over_vel != 0.0)
+        self.with(|s| {
+            s.drag.is_some()
+                || s.fling != 0.0
+                || s.flight.is_some()
+                || s.over != 0.0
+                || s.over_vel != 0.0
+        })
+    }
+
+    /// The fling events since the last call, in order: counted flicks,
+    /// boundaries passed, retargets and landings
+    /// (docs/design/20261119_01_RIBBON_TWO_FINGER_AND_THUMB_LABEL_PLAN.md).
+    pub fn take_fling_events(&self) -> Vec<FlingEvent> {
+        self.with(|s| std::mem::take(&mut s.fling_events))
+    }
+
+    /// The section a counted flight will land on and the boundaries it
+    /// still has to pass, while one is in flight.
+    pub fn flight(&self) -> Option<(SectionId, u32)> {
+        self.with(|s| s.flight.as_ref().map(|f| (f.end.id, f.remaining())))
     }
 
     /// The content's length along the axis, as the last range update had it.

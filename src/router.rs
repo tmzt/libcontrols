@@ -17,8 +17,9 @@ use crate::event::{
 };
 use crate::filter::{FilterContext, FilterStack, Filtered};
 use crate::flags::{NodeFlags, NodeState};
+use crate::fling::{Boundaries, FlingEvent, FlingProfile, FlingStop, Release, Stop, Target};
 use crate::rect::Rect;
-use crate::scroll::{PressStart, ScrollAxis, ScrollPane};
+use crate::scroll::{Flight, PressStart, ScrollAxis, ScrollPane};
 use crate::scrollbar::{Scrollbar, ScrollbarTheme, draw_bar};
 use crate::sections::SectionId;
 use crate::symbol::Symbol;
@@ -1746,6 +1747,7 @@ impl Router {
         for node in self.nodes.iter().flatten() {
             let any: &dyn Any = node.control.as_ref();
             if let Some(pane) = any.downcast_ref::<ScrollPane>() {
+                self.resolve_stops(pane);
                 let limit = pane.overscroll_limit();
                 let shows = pane.shows_indicator();
                 let fling = pane.fling_profile(&theme);
@@ -2088,6 +2090,176 @@ impl Router {
         );
     }
 
+    /// Where a released fling on `pane` ends, by its profile's stop
+    /// (the 18:31 EST amendment, items 3 and 4): a distance fling moved
+    /// onto a boundary, or a counted flick's flight. A pane without
+    /// sections, or a `Free` stop, keeps the fling as released.
+    fn stop_fling(&self, pane: &ScrollPane, r: Release, p: &FlingProfile, pair: bool) {
+        let Some(content) = pane.sections() else {
+            return;
+        };
+        if content.is_empty() {
+            return;
+        }
+        let state = pane.state();
+        let (offset, max, carried) = state.with(|s| (s.offset(), s.max(), s.carried_flight.take()));
+        let now = self.time.get();
+        // Boundaries past the offset in the direction `dir`, nearest first.
+        let ahead = |b: Boundaries, dir: f32| {
+            let mut tops: Vec<(SectionId, usize, f32)> = content
+                .boundary_tops(b)
+                .into_iter()
+                .filter(|&(_, _, t)| dir * (t.min(max) - offset) > 0.5)
+                .collect();
+            if dir < 0.0 {
+                tops.reverse();
+            }
+            tops
+        };
+        let stop_at = |hit: Option<&(SectionId, usize, f32)>, dir: f32| match hit {
+            Some(&(id, index, top)) => Some(Stop {
+                target: Target::Section { id, index },
+                top,
+                id,
+            }),
+            None => content.locate(
+                if dir > 0.0 {
+                    Target::End
+                } else {
+                    Target::Start
+                },
+                dir,
+            ),
+        };
+        match p.stop {
+            FlingStop::Boundary { boundaries } => {
+                let v = state.with(|s| s.fling());
+                if v == 0.0 {
+                    return;
+                }
+                let dir = -v.signum();
+                let tops = ahead(boundaries, dir);
+                let natural = offset + dir * v.abs() / p.decay;
+                let Some(mut end) =
+                    stop_at(tops.iter().find(|t| dir * (t.2 - natural) >= 0.0), dir)
+                else {
+                    return;
+                };
+                let speed =
+                    |end: &Stop| (end.top.clamp(0.0, max) - offset).abs() * p.decay + p.min_speed;
+                if speed(&end) > p.max_speed {
+                    // The last boundary within reach.
+                    let reach = (p.max_speed - p.min_speed) / p.decay;
+                    let Some(hit) = tops.iter().rev().find(|t| dir * (t.2 - offset) <= reach)
+                    else {
+                        return;
+                    };
+                    let Some(e) = stop_at(Some(hit), dir) else {
+                        return;
+                    };
+                    end = e;
+                }
+                if (end.top.clamp(0.0, max) - offset).abs() <= 0.5 {
+                    return;
+                }
+                let s = speed(&end);
+                state.with(|st| st.start_landing(end, dir, s));
+            }
+            FlingStop::Count { boundaries, skip } => {
+                if !r.flick || r.v_r == 0.0 {
+                    return;
+                }
+                let dir = -r.v_r.signum();
+                let mut n = skip.count(r.v_r, pair);
+                let mut added = false;
+                let tops = ahead(boundaries, dir);
+                if let Some((cdir, rem, target)) = carried
+                    && cdir == dir
+                    && r.quick
+                {
+                    // Its own count past the boundaries the stopped flight
+                    // still had to pass (counted again from here, as the
+                    // drag may have passed some).
+                    let still = tops
+                        .iter()
+                        .position(|t| t.0 == target)
+                        .map_or(rem, |k| k as u32 + 1);
+                    n = (still + n).min(skip.two_finger_max);
+                    added = true;
+                }
+                let path: Vec<(SectionId, usize, Option<f32>)> = tops
+                    .iter()
+                    .take(n as usize)
+                    .map(|&(id, i, t)| (id, i, Some(t)))
+                    .collect();
+                let hit = (path.len() == n as usize).then(|| &tops[n as usize - 1]);
+                let Some(end) = stop_at(hit, dir) else {
+                    return;
+                };
+                if path.is_empty() && (end.top.clamp(0.0, max) - offset).abs() <= 0.5 {
+                    return;
+                }
+                let flight = Flight::new(end, offset, max, skip.duration(n), path, n, dir);
+                state.with(|s| {
+                    s.start_flight(flight, now);
+                    s.fling_events.push(if added {
+                        FlingEvent::Retargeted { target: end.id }
+                    } else {
+                        FlingEvent::Counted { target: end.id, n }
+                    });
+                });
+            }
+            _ => {}
+        }
+    }
+
+    /// Bring a pane's flight or landing up to date with its sections: the
+    /// target's and the path's tops this frame, and a removed, split or
+    /// merged target replaced (`Retargeted`).
+    fn resolve_stops(&self, pane: &ScrollPane) {
+        let Some(content) = pane.sections() else {
+            return;
+        };
+        let (flight, landing) = pane.state().with(|s| {
+            (
+                s.flight
+                    .as_ref()
+                    .map(|f| (f.end, f.dir, f.path.iter().map(|p| p.0).collect::<Vec<_>>())),
+                s.landing,
+            )
+        });
+        if let Some((end, dir, ids)) = flight {
+            let now = content.locate(end.target, dir);
+            let tops = content.tops_of(&ids);
+            pane.state().with(|s| {
+                let Some(now) = now else {
+                    s.flight = None;
+                    return;
+                };
+                let Some(f) = s.flight.as_mut() else {
+                    return;
+                };
+                f.end = now;
+                for (p, t) in f.path.iter_mut().zip(tops) {
+                    p.2 = t;
+                }
+                if now.id != end.id {
+                    s.fling_events
+                        .push(FlingEvent::Retargeted { target: now.id });
+                }
+            });
+        }
+        if let Some(l) = landing
+            && let Some(now) = content.locate(l.end.target, l.dir)
+        {
+            pane.state().with(|s| {
+                if let Some(land) = s.landing.as_mut() {
+                    land.end = now;
+                }
+            });
+        }
+    }
+
     /// Apply the scrub the scrollbar of the pane at `index` asked for.
     fn apply_scrub(&self, index: usize) {
         let Some(p) = self.scroll_at(index) else {
@@ -2341,7 +2513,10 @@ impl Router {
                         .pair_lifted_at
                         .get()
                         .is_some_and(|t| now - t <= f64::from(fling.two_finger_lift) + 1e-9);
-                    p.state().with(|s| s.release(now, &fling, clocked, pair));
+                    let release = p.state().with(|s| s.release(now, &fling, clocked, pair));
+                    if let Some(r) = release {
+                        self.stop_fling(p, r, &fling, pair);
+                    }
                 }
                 Some(self.pane_handled(index))
             }
