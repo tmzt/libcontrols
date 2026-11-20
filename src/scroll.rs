@@ -832,6 +832,7 @@ impl ScrollPane {
                 s.bookmarks_on = options.bookmarks_on();
                 s.thumb_label_on = options.thumb_label;
                 s.skip_count_on = options.skip_count;
+                s.snap_on = options.snap_to_bookmarks;
                 s.resolved = options.with_theme(&Default::default());
                 s.sections = self.sections.clone();
             });

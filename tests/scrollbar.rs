@@ -889,3 +889,81 @@ fn crowded_pills_give_way_smaller_first_then_farther_first() {
     );
     assert!(layout[0].nearest);
 }
+
+// ---- Plan 20261119_01, step 7: snapping while scrubbing ----
+
+/// The scrubs' offsets and bookmarks, and the snaps, in order.
+fn scrub_events(bar: &ScrollbarState) -> Vec<(char, f32, Option<SectionId>)> {
+    bar.take_events()
+        .into_iter()
+        .filter_map(|e| match e {
+            ScrollbarEvent::Scrub {
+                offset, bookmark, ..
+            } => Some(('s', offset, bookmark)),
+            ScrollbarEvent::Snapped { id, offset, .. } => Some(('n', offset, Some(id))),
+            ScrollbarEvent::Released {
+                offset, bookmark, ..
+            } => Some(('r', offset, bookmark)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_scrub_near_a_bookmark_snaps_to_its_top_once_per_snap() {
+    // Bookmarks at tops 0, 1600 and 2000 of 4000: pills at 0, 400, 500 on
+    // the track. The thumb is 250 long, grabbed 100 below its top.
+    let f = standalone_with(
+        ScrollbarOptions::default().snap_to_bookmarks(true),
+        Some(ten()),
+    );
+    down(&f.router, ON_THUMB);
+    f.bar.take_events();
+    let at_centre = |c: f32| [394.0, c - 125.0 + 100.0];
+    drag(&f.router, ON_THUMB, at_centre(410.0));
+    assert_eq!(
+        scrub_events(&f.bar),
+        [
+            ('s', 1600.0, Some(SectionId(4))),
+            ('n', 1600.0, Some(SectionId(4)))
+        ]
+    );
+    drag(&f.router, ON_THUMB, at_centre(395.0));
+    assert!(scrub_events(&f.bar).is_empty(), "still snapped: no event");
+    // 50 from either pill: no snap, the offset the thumb's share.
+    drag(&f.router, ON_THUMB, at_centre(450.0));
+    let e = scrub_events(&f.bar);
+    assert_eq!(e.len(), 1);
+    assert!((e[0].1 - 325.0 / 750.0 * 3000.0).abs() < 1e-2, "{e:?}");
+    // Back in: a new snap, sent again.
+    drag(&f.router, ON_THUMB, at_centre(500.0 + 12.0));
+    assert_eq!(
+        scrub_events(&f.bar),
+        [
+            ('s', 2000.0, Some(SectionId(5))),
+            ('n', 2000.0, Some(SectionId(5)))
+        ]
+    );
+    f.router.deliver_mouse(MouseEvent::Up {
+        pos: at_centre(512.0),
+        button: LEFT,
+    });
+    assert_eq!(scrub_events(&f.bar), [('r', 2000.0, Some(SectionId(5)))]);
+}
+
+#[test]
+fn without_snap_to_bookmarks_a_scrub_is_as_in_0_11_0() {
+    let f = standalone_with(ScrollbarOptions::default(), Some(ten()));
+    down(&f.router, ON_THUMB);
+    f.bar.take_events();
+    drag(&f.router, ON_THUMB, [394.0, 410.0 - 125.0 + 100.0]);
+    let e = scrub_events(&f.bar);
+    assert_eq!(e.len(), 1, "{e:?}");
+    assert!((e[0].1 - 285.0 / 750.0 * 3000.0).abs() < 1e-2, "{e:?}");
+    assert_eq!(
+        e[0].2,
+        Some(SectionId(4)),
+        "the nearest bookmark, as before"
+    );
+    assert_eq!(libcontrols::ScrollbarTheme::default().snap_distance, 16.0);
+}

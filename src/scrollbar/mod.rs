@@ -111,6 +111,9 @@ pub struct ScrollbarTheme {
     pub thumb_label_bg: Option<[f32; 4]>,
     /// The label's text colour (`None`: the theme's `text_color`).
     pub thumb_label_color: Option<[f32; 4]>,
+    /// While scrubbing with `snap_to_bookmarks`, the thumb's centre this
+    /// close (track pixels) to a bookmark pill's centre snaps to it.
+    pub snap_distance: f32,
 }
 
 impl Default for ScrollbarTheme {
@@ -146,6 +149,7 @@ impl Default for ScrollbarTheme {
             bookmark_scale_large: 1.30,
             thumb_label_bg: None,
             thumb_label_color: None,
+            snap_distance: 16.0,
         }
     }
 }
@@ -189,6 +193,10 @@ pub struct ScrollbarOptions {
     pub bookmark_scale_large: Option<f32>,
     pub thumb_label_bg: Option<[f32; 4]>,
     pub thumb_label_color: Option<[f32; 4]>,
+    pub snap_distance: Option<f32>,
+    /// Per instance: a scrub snaps to a bookmark within `snap_distance`
+    /// (`false` unless set).
+    pub snap_to_bookmarks: bool,
     /// Per instance: a label on the thumb while scrolling (`false` unless
     /// set).
     pub thumb_label: bool,
@@ -244,6 +252,17 @@ impl ScrollbarOptions {
     setter!(bookmark_scale_large: f32);
     setter!(thumb_label_bg: [f32; 4]);
     setter!(thumb_label_color: [f32; 4]);
+    setter!(snap_distance: f32);
+
+    /// While scrubbing, snap to a bookmark when the thumb's centre comes
+    /// within `snap_distance` of its pill's centre: the scrub's offset is
+    /// that bookmark's section top, and `ScrollbarEvent::Snapped` is sent
+    /// the first time each snap takes.
+    #[must_use]
+    pub fn snap_to_bookmarks(mut self, on: bool) -> Self {
+        self.snap_to_bookmarks = on;
+        self
+    }
 
     /// Show a label on the thumb while scrolling: the bookmark of the
     /// section at the window's top, or the app's formatter's text
@@ -335,6 +354,7 @@ impl ScrollbarOptions {
                 .unwrap_or(theme.bookmark_scale_large),
             thumb_label_bg: self.thumb_label_bg.or(theme.thumb_label_bg),
             thumb_label_color: self.thumb_label_color.or(theme.thumb_label_color),
+            snap_distance: self.snap_distance.unwrap_or(theme.snap_distance),
         }
     }
 }
@@ -374,6 +394,7 @@ pub struct ScrollbarResolved {
     pub bookmark_scale_large: f32,
     pub thumb_label_bg: Option<[f32; 4]>,
     pub thumb_label_color: Option<[f32; 4]>,
+    pub snap_distance: f32,
 }
 
 impl ScrollbarResolved {
@@ -415,6 +436,10 @@ pub enum ScrollbarEvent {
         section: Option<SectionId>,
         bookmark: Option<SectionId>,
     },
+    /// A scrub snapped to bookmark `id`'s section top, `offset`
+    /// (`snap_to_bookmarks`), sent the first time each snap takes.
+    #[non_exhaustive]
+    Snapped { id: SectionId, offset: f32 },
 }
 
 /// Draw the thumb and, while held or fading, the bookmarks, from the state.
@@ -620,7 +645,9 @@ impl Scrollbar {
         let visibility = self.options.visibility;
         let on = self.options.bookmarks_on();
         let (label, skip) = (self.options.thumb_label, self.options.skip_count);
+        let snap = self.options.snap_to_bookmarks;
         self.state.with(|s| {
+            s.snap_on = snap;
             s.track = track;
             s.visibility = visibility;
             s.bookmarks_on = on;

@@ -68,6 +68,9 @@ pub(crate) struct Inner {
     pub(crate) bookmarks_on: bool,
     pub(crate) thumb_label_on: bool,
     pub(crate) skip_count_on: bool,
+    pub(crate) snap_on: bool,
+    /// The bookmark the scrub is snapped to now.
+    snapped: Option<SectionId>,
     /// A counted flight on the pane, if one is in progress.
     pub(crate) flight: Option<LabelFlight>,
     pub(crate) offset: f32,
@@ -100,6 +103,8 @@ impl Default for Inner {
             bookmarks_on: true,
             thumb_label_on: false,
             skip_count_on: false,
+            snap_on: false,
+            snapped: None,
             flight: None,
             offset: 0.0,
             content: 0.0,
@@ -271,7 +276,17 @@ impl Inner {
         } else {
             0.0
         };
-        let target = u * self.range();
+        let mut target = u * self.range();
+        let snap = if self.snap_on {
+            self.snap_for(self.track.y + u * travel + thumb.h * 0.5)
+        } else {
+            None
+        };
+        if let Some((_, top)) = snap {
+            target = top.clamp(0.0, self.range());
+        }
+        let first_snap = snap.filter(|&(id, _)| self.snapped != Some(id));
+        self.snapped = snap.map(|(id, _)| id);
         if target == self.offset {
             return;
         }
@@ -281,8 +296,29 @@ impl Inner {
         self.events.push(ScrollbarEvent::Scrub {
             offset: target,
             section,
-            bookmark,
+            bookmark: snap.map(|(id, _)| id).or(bookmark),
         });
+        if let Some((id, _)) = first_snap {
+            self.events
+                .push(ScrollbarEvent::Snapped { id, offset: target });
+        }
+    }
+
+    /// The bookmark whose pill's centre is within `snap_distance` of a
+    /// thumb centred at `centre`, nearest first, with its section's top.
+    fn snap_for(&self, centre: f32) -> Option<(SectionId, f32)> {
+        let sections = self.sections.as_ref()?;
+        let content = self.content.max(1.0);
+        sections
+            .placed_bookmarks()
+            .into_iter()
+            .map(|(id, top, _)| {
+                let y = self.track.y + (top / content).clamp(0.0, 1.0) * self.track.h;
+                (id, top, (y - centre).abs())
+            })
+            .filter(|&(_, _, d)| d <= self.resolved.snap_distance)
+            .min_by(|a, b| a.2.total_cmp(&b.2))
+            .map(|(id, top, _)| (id, top))
     }
 
     pub(crate) fn press(&mut self, pos: [f32; 2]) -> bool {
@@ -293,6 +329,7 @@ impl Inner {
             return false;
         };
         let on_thumb = pos[1] >= thumb.y && pos[1] <= thumb.bottom();
+        self.snapped = None;
         self.grab = Some(if on_thumb {
             pos[1] - thumb.y
         } else {
@@ -321,7 +358,10 @@ impl Inner {
         }
         self.last_active = self.now;
         self.released_at = self.now;
-        let (section, bookmark) = self.names();
+        let (section, mut bookmark) = self.names();
+        if let Some(id) = self.snapped.take() {
+            bookmark = Some(id);
+        }
         self.events.push(ScrollbarEvent::Released {
             offset: self.offset,
             section,
