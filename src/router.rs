@@ -18,7 +18,7 @@ use crate::event::{
 use crate::filter::{FilterContext, FilterStack, Filtered};
 use crate::flags::{NodeFlags, NodeState};
 use crate::rect::Rect;
-use crate::scroll::{ScrollAxis, ScrollPane};
+use crate::scroll::{PressStart, ScrollAxis, ScrollPane};
 use crate::scrollbar::{Scrollbar, ScrollbarTheme, draw_bar};
 use crate::sections::SectionId;
 use crate::symbol::Symbol;
@@ -196,6 +196,8 @@ struct Grab {
     part: ControlPart,
     /// The drag passed the touch slop and stayed with the node.
     kept: bool,
+    /// Router time of the press.
+    pressed_at: f64,
 }
 
 /// A drag in progress: the node the press grabbed and how.
@@ -949,6 +951,7 @@ impl Router {
                 press_modifiers: self.modifiers.get(),
                 part,
                 kept: false,
+                pressed_at: self.time.get(),
             }));
         }
         let ctx = self.context(index, part);
@@ -1745,11 +1748,12 @@ impl Router {
             if let Some(pane) = any.downcast_ref::<ScrollPane>() {
                 let limit = pane.overscroll_limit();
                 let shows = pane.shows_indicator();
+                let fling = pane.fling_profile(&theme);
                 busy |= pane.state().with(|s| {
-                    let moved = s.tick(dt, now, &theme, limit);
+                    let moved = s.tick(dt, now, &theme, &fling, limit);
                     moved
-                        || s.is_coasting(&theme)
-                        || (shows && s.indicator_alpha(now, &theme) > 0.0)
+                        || s.is_coasting(&fling)
+                        || (shows && s.indicator_alpha(now, &theme, &fling) > 0.0)
                 });
                 if let Some(bar) = pane.scrollbar() {
                     pane.feed_scrollbar(&bar_theme, &theme, now);
@@ -2201,6 +2205,7 @@ impl Router {
                         press_modifiers: self.modifiers.get(),
                         part: ControlPart::Thumb,
                         kept: true,
+                        pressed_at: now,
                     }));
                     self.bar_drag.set(Some((index, button)));
                     return Some(EventResponse::handled(
@@ -2214,13 +2219,19 @@ impl Router {
                 let (index, pane) = path.iter().rev().find_map(|&(i, _)| {
                     self.scroll_at(i)
                         .filter(|p| {
-                            self.takes_input(i) && p.state().with(|s| s.is_coasting(&theme))
+                            let fling = p.fling_profile(&theme);
+                            self.takes_input(i) && p.state().with(|s| s.is_coasting(&fling))
                         })
                         .map(|p| (i, p))
                 })?;
                 let limit = pane.overscroll_limit();
                 let finger = pane.axis().of(pos);
-                pane.state().with(|s| s.begin_drag(finger, now, limit));
+                let press = PressStart {
+                    at: now,
+                    pos: finger,
+                };
+                pane.state()
+                    .with(|s| s.begin_drag(finger, now, limit, press));
                 self.set_grab(Some(Grab {
                     index,
                     button,
@@ -2228,6 +2239,7 @@ impl Router {
                     press_modifiers: self.modifiers.get(),
                     part: ControlPart::Body,
                     kept: false,
+                    pressed_at: now,
                 }));
                 self.pane_drag.set(Some((index, button)));
                 Some(self.pane_handled(index))
@@ -2256,7 +2268,14 @@ impl Router {
                     let pane = self.scroll_at(index)?;
                     let limit = pane.overscroll_limit();
                     let finger = pane.axis().of(current_pos);
-                    pane.state().with(|s| s.drag_to(finger, now, limit));
+                    // Two fingers drag `two_finger_factor` times as far;
+                    // one again, 1x from where it is.
+                    let factor = if self.fingers.get() >= 2 {
+                        pane.fling_profile(&theme).two_finger_factor
+                    } else {
+                        1.0
+                    };
+                    pane.state().with(|s| s.drag_to(finger, now, limit, factor));
                     return Some(self.pane_handled(index));
                 }
                 let grab = self.grab.get().filter(|g| g.button == button && !g.kept)?;
@@ -2317,7 +2336,12 @@ impl Router {
                 self.drop_click.set(Some(button));
                 if let Some(p) = self.scroll_at(index) {
                     let clocked = self.clocked.get();
-                    p.state().with(|s| s.release(now, &theme, clocked));
+                    let fling = p.fling_profile(&theme);
+                    let pair = self
+                        .pair_lifted_at
+                        .get()
+                        .is_some_and(|t| now - t <= f64::from(fling.two_finger_lift) + 1e-9);
+                    p.state().with(|s| s.release(now, &fling, clocked, pair));
                 }
                 Some(self.pane_handled(index))
             }
@@ -2352,7 +2376,12 @@ impl Router {
             let limit = pane.overscroll_limit();
             let finger = pane.axis().of(at);
             let now = self.time.get();
-            pane.state().with(|s| s.begin_drag(finger, now, limit));
+            let press = PressStart {
+                at: grab.pressed_at,
+                pos: pane.axis().of(grab.start_pos),
+            };
+            pane.state()
+                .with(|s| s.begin_drag(finger, now, limit, press));
         }
     }
 

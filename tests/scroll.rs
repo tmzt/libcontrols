@@ -6,9 +6,10 @@ use std::sync::Arc;
 
 use common::{Call, Recorder};
 use libcontrols::{
-    Button, ButtonState, ControlAction, ControlPart, DrawContext, DrawControl, EventContext,
-    HostedControl, InputEvent, Key, KeyboardEvent, Label, MouseButton, MouseEvent, NodeId,
-    Overscroll, Rect, Router, ScrollAxis, ScrollEdge, ScrollPane, ScrollState, Slider,
+    Button, ButtonState, ControlAction, ControlPart, ControlTheme, DrawContext, DrawControl,
+    EventContext, FlingOptions, FlingProfile, HostedControl, InputEvent, Key, KeyboardEvent, Label,
+    MouseButton, MouseEvent, NodeId, Overscroll, Rect, Router, ScrollAxis, ScrollEdge, ScrollPane,
+    ScrollState, ScrollTheme, Slider,
 };
 use libmsdf::drawlist::{DrawList, SdfInstance, SdfKind};
 
@@ -729,4 +730,255 @@ fn buttons_and_labels_activate_on_the_click_not_the_press() {
     assert_eq!(resp.action, None);
     let resp = router.deliver_event(InputEvent::Mouse(click(110.0, 10.0)));
     assert!(matches!(resp.action, Some(ControlAction::Activated { .. })));
+}
+
+// ---- Plan 20261119_01, step 4: the fling profile and two fingers ----
+
+/// A context drawing with `fling` as the theme's profile.
+fn themed(fling: FlingProfile) -> DrawContext<'static> {
+    // ScrollTheme is #[non_exhaustive]: set the field on a default.
+    let mut theme = ControlTheme::default();
+    theme.scroll.fling = fling;
+    DrawContext::default().with_theme(theme)
+}
+
+fn render_with(router: &Router, ctx: &DrawContext) {
+    let mut list = DrawList::default();
+    router.render(&mut list, ctx);
+}
+
+/// 0.11.0's fling, for the same flick: its release speed from the first
+/// and last sample, then Euler steps of `dt` at decay 3.2 until under 30
+/// px/s or at the end. Returns the distance it travels.
+fn old_fling_distance(v: f32, dt: f32, room: f32) -> f32 {
+    let mut fling = v.clamp(-8000.0, 8000.0);
+    let mut d = 0.0f32;
+    while fling.abs() >= 30.0 {
+        let before = d;
+        d = (d + fling * dt).min(room);
+        fling *= (-3.2 * dt).exp();
+        if d == before {
+            break;
+        }
+    }
+    d
+}
+
+#[test]
+fn classic_flings_exactly_as_0_11_0() {
+    let l = list(1000);
+    render_with(&l.router, &themed(FlingProfile::classic()));
+    flick(&l);
+    l.router.deliver_mouse(up(100.0, 30.0));
+    let lifted = l.offset();
+    while l.router.advance(0.016) {}
+    // The flick: 60 px over 6 frames of 16 ms.
+    let expected = old_fling_distance(60.0 / 0.096, 0.016, 1e9);
+    assert!(
+        (l.offset() - lifted - expected).abs() < 0.01,
+        "{} vs {expected}",
+        l.offset() - lifted
+    );
+    // A rest before lifting does not fling, and a touch stops it, as in
+    // a_finger_that_rests_before_lifting_does_not_fling and
+    // a_touch_during_a_fling_stops_it_and_is_not_a_tap.
+    let l = list(100);
+    render_with(&l.router, &themed(FlingProfile::classic()));
+    flick(&l);
+    l.router.advance(0.2);
+    l.router.deliver_mouse(up(100.0, 30.0));
+    let lifted = l.offset();
+    l.router.advance(0.1);
+    assert_eq!(l.offset(), lifted);
+    let l = list(100);
+    render_with(&l.router, &themed(FlingProfile::classic()));
+    flick(&l);
+    l.router.deliver_mouse(up(100.0, 30.0));
+    l.router.advance(0.016);
+    l.router.deliver_mouse(down(100.0, 50.0));
+    let held = l.offset();
+    l.router.advance(0.1);
+    assert_eq!(l.offset(), held);
+}
+
+/// Fling a fresh 1000-row list at `fling` with a steady flick of 10 px a
+/// 16 ms frame, then advance by `dt` until it stops. Returns the
+/// distance travelled after the lift.
+fn fling_distance(fling: FlingProfile, dt: f32) -> f32 {
+    let l = list(1000);
+    render_with(&l.router, &themed(fling));
+    l.router.scroll_to(l.pane, [0.0, 10_000.0]);
+    flick(&l);
+    l.router.deliver_mouse(up(100.0, 30.0));
+    let lifted = l.offset();
+    let mut frames = 0;
+    while l.router.advance(dt) {
+        frames += 1;
+        assert!(frames < 100_000);
+    }
+    l.offset() - lifted
+}
+
+#[test]
+fn the_default_fling_covers_the_same_distance_at_60_and_10_frames_a_second() {
+    let fast = fling_distance(FlingProfile::flankr(), 1.0 / 60.0);
+    let slow = fling_distance(FlingProfile::flankr(), 0.1);
+    assert!(fast > 100.0, "{fast}");
+    // Plain steps of at most dt_max (1/30 s): within 2% (CHANGES.md).
+    assert!((fast - slow).abs() / fast < 0.02, "{fast} vs {slow}");
+}
+
+/// A steady drag on `l` with `fingers` down: `steps` moves of `dy` px,
+/// a 16 ms frame each, from y 90; returns the last y.
+fn steady(l: &List, fingers: u8, steps: usize, dy: f32) -> f32 {
+    l.router.set_fingers(fingers);
+    l.router.deliver_mouse(down(100.0, 90.0));
+    let mut y = 90.0;
+    for _ in 0..steps {
+        l.router.advance(0.016);
+        y += dy;
+        l.router.deliver_mouse(drag([100.0, 90.0], 100.0, y));
+    }
+    y
+}
+
+#[test]
+fn two_fingers_drag_five_times_and_one_again_once() {
+    let l = list(1000);
+    render(&l.router);
+    l.router.scroll_to(l.pane, [0.0, 10_000.0]);
+    l.router.set_fingers(1);
+    l.router.deliver_mouse(down(100.0, 90.0));
+    l.router.set_fingers(2);
+    // Past the slop: the pane takes the press at y 70.
+    l.router.deliver_mouse(drag([100.0, 90.0], 100.0, 70.0));
+    let taken = l.offset();
+    l.router.deliver_mouse(drag([100.0, 90.0], 100.0, 60.0));
+    assert_eq!(l.offset(), taken + 50.0, "10 px at 5x");
+    l.router.set_fingers(1);
+    l.router.deliver_mouse(drag([100.0, 90.0], 100.0, 50.0));
+    assert_eq!(l.offset(), taken + 60.0, "1x from where it is");
+    l.router.advance(0.5);
+    l.router.set_fingers(0);
+    l.router.deliver_mouse(up(100.0, 50.0));
+
+    // An override of 4.0.
+    let l = list_with(
+        1000,
+        ScrollPane::new(VIEWPORT, ScrollAxis::Vertical)
+            .with_fling(FlingOptions::new().two_finger_factor(4.0)),
+    );
+    l.router.scroll_to(l.pane, [0.0, 10_000.0]);
+    l.router.set_fingers(2);
+    l.router.deliver_mouse(down(100.0, 90.0));
+    l.router.deliver_mouse(drag([100.0, 90.0], 100.0, 70.0));
+    let taken = l.offset();
+    l.router.deliver_mouse(drag([100.0, 90.0], 100.0, 60.0));
+    assert_eq!(l.offset(), taken + 40.0, "10 px at 4x");
+    let profile = l
+        .router
+        .get::<ScrollPane>(l.pane)
+        .unwrap()
+        .fling_profile(&ScrollTheme::default());
+    assert_eq!(profile.two_finger_factor, 4.0);
+    assert_eq!(
+        profile.decay,
+        FlingProfile::flankr().decay,
+        "the rest the theme's"
+    );
+}
+
+/// The first frame's movement after a lift: the fling's speed times dt.
+fn first_frame_after(l: &List) -> f32 {
+    let lifted = l.offset();
+    l.router.advance(1.0 / 60.0);
+    (l.offset() - lifted) * 60.0
+}
+
+#[test]
+fn a_pair_lifted_together_flings_five_times_and_apart_once() {
+    // 10 px a frame up: 625 px/s, under the knee.
+    let one = {
+        let l = list(1000);
+        render(&l.router);
+        l.router.scroll_to(l.pane, [0.0, 10_000.0]);
+        steady(&l, 1, 6, -10.0);
+        l.router.set_fingers(0);
+        l.router.deliver_mouse(up(100.0, 30.0));
+        first_frame_after(&l)
+    };
+    assert!((one - 625.0).abs() < 2.0, "{one}");
+    let pair = |apart: f32| {
+        let l = list(1000);
+        render(&l.router);
+        l.router.scroll_to(l.pane, [0.0, 10_000.0]);
+        l.router.set_fingers(1);
+        l.router.deliver_mouse(down(100.0, 90.0));
+        l.router.set_fingers(2);
+        let mut y = 90.0;
+        for _ in 0..6 {
+            l.router.advance(0.016);
+            y -= 10.0;
+            l.router.deliver_mouse(drag([100.0, 90.0], 100.0, y));
+        }
+        l.router.set_fingers(1);
+        if apart > 0.0 {
+            // The other finger keeps moving at the same speed meanwhile.
+            let frames = (apart / 0.016).round() as usize;
+            for _ in 0..frames {
+                l.router.advance(0.016);
+                y -= 10.0;
+                l.router.deliver_mouse(drag([100.0, 90.0], 100.0, y));
+            }
+        } else {
+            l.router.advance(0.001);
+        }
+        l.router.set_fingers(0);
+        l.router.deliver_mouse(up(100.0, y));
+        first_frame_after(&l)
+    };
+    let together = pair(0.0);
+    assert!(
+        (together - 5.0 * one).abs() < 10.0,
+        "{together} vs 5 x {one}"
+    );
+    let apart = pair(0.192);
+    assert!((apart - one).abs() < 2.0, "{apart} vs {one}");
+}
+
+#[test]
+fn a_two_finger_fling_is_capped_at_max_speed() {
+    let l = list(2000);
+    render(&l.router);
+    l.router.scroll_to(l.pane, [0.0, 10_000.0]);
+    l.router.set_fingers(2);
+    l.router.deliver_mouse(down(100.0, 90.0));
+    let mut y = 90.0;
+    for _ in 0..6 {
+        l.router.advance(0.016);
+        y -= 60.0;
+        l.router.deliver_mouse(drag([100.0, 90.0], 100.0, y));
+    }
+    l.router.set_fingers(0);
+    l.router.deliver_mouse(up(100.0, y));
+    let v = first_frame_after(&l);
+    assert!((v - 16_000.0).abs() < 1.0, "{v}");
+}
+
+#[test]
+fn a_two_finger_press_on_a_row_is_no_tap() {
+    let l = list(10);
+    l.router.set_fingers(1);
+    l.router.deliver_mouse(down(100.0, 10.0));
+    l.router.set_fingers(2);
+    l.router.set_fingers(0);
+    l.router.deliver_mouse(up(100.0, 10.0));
+    l.router.deliver_mouse(click(100.0, 10.0));
+    assert!(l.clicked().is_empty());
+    l.router.set_fingers(1);
+    l.router.deliver_mouse(down(100.0, 10.0));
+    l.router.set_fingers(0);
+    l.router.deliver_mouse(up(100.0, 10.0));
+    l.router.deliver_mouse(click(100.0, 10.0));
+    assert_eq!(l.clicked(), [0]);
 }

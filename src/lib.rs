@@ -12,6 +12,7 @@ pub mod editable_label;
 pub mod event;
 pub mod filter;
 pub mod flags;
+pub mod fling;
 pub mod handle;
 pub mod label;
 #[cfg(feature = "markdown")]
@@ -57,6 +58,9 @@ pub use event::{
 };
 pub use filter::{FilterContext, FilterStack, Filtered, InputFilter};
 pub use flags::{NodeFlags, NodeState};
+pub use fling::{
+    Boundaries, FlingEvent, FlingOptions, FlingProfile, FlingStop, SkipMapping, SpeedFit,
+};
 pub use handle::{ControlHandle, ReadValue};
 pub use label::{Label, LabelState};
 #[cfg(feature = "markdown")]

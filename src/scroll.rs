@@ -16,6 +16,7 @@ use libmsdf::drawlist::{DrawList, SdfInstance, SdfKind};
 use crate::control::HostedControl;
 use crate::event::{ControlAction, ControlPart, EventContext, KeyboardEvent, MouseEvent};
 use crate::flags::NodeFlags;
+use crate::fling::{FlingOptions, FlingProfile, Gesture, Release};
 use crate::rect::Rect;
 use crate::router::NodeId;
 use crate::scrollbar::{ScrollbarOptions, ScrollbarState, ScrollbarTheme};
@@ -81,8 +82,10 @@ pub enum Overscroll {
     Fraction(f32),
 }
 
-/// How long the finger's recent samples are kept for its speed.
-const SAMPLE_WINDOW: f64 = 0.100;
+/// How long the finger's recent samples are kept for its speed (the
+/// longest `speed_window`), and at most how many.
+const SAMPLE_KEEP: f64 = 0.5;
+const SAMPLE_MAX: usize = 256;
 /// Within this of its edge, a sticky pane is at it.
 const AT_EDGE: f32 = 1.0;
 /// The overscroll snaps to the end once this close.
@@ -93,10 +96,25 @@ const SNAP: f32 = 0.5;
 struct DragTrack {
     /// The finger's last position along the axis, on the screen.
     last: f32,
-    /// Router time and position of the recent samples.
+    /// Router time and position of the recent samples (the pointer's,
+    /// before any two-finger factor).
     samples: Vec<(f64, f32)>,
     /// When the finger last moved.
     last_move: f64,
+    /// Touch-down: its router time and its position along the axis.
+    down: f64,
+    start: f32,
+    /// The fling running at touch-down (px/s).
+    carried: f32,
+}
+
+/// Where a pane's press began, for its release.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub(crate) struct PressStart {
+    /// Router time of the touch-down.
+    pub(crate) at: f64,
+    /// The pointer's position along the axis then.
+    pub(crate) pos: f32,
 }
 
 #[derive(Debug)]
@@ -208,8 +226,8 @@ impl Inner {
     }
 
     /// Whether a fling or a spring is moving it.
-    pub(crate) fn is_coasting(&self, theme: &ScrollTheme) -> bool {
-        self.fling.abs() >= theme.min_fling || self.over != 0.0 || self.over_vel != 0.0
+    pub(crate) fn is_coasting(&self, p: &FlingProfile) -> bool {
+        self.fling.abs() >= p.min_speed || self.over != 0.0 || self.over_vel != 0.0
     }
 
     /// The range: the content's length and the largest offset. A following
@@ -253,8 +271,16 @@ impl Inner {
         (delta > 0.0 && self.offset < self.max) || (delta < 0.0 && self.offset > 0.0)
     }
 
-    /// A finger took hold at `finger` (along the axis, on the screen).
-    pub(crate) fn begin_drag(&mut self, finger: f32, now: f64, limit: Option<f32>) {
+    /// A finger took hold at `finger` (along the axis, on the screen),
+    /// having touched down at `press`.
+    pub(crate) fn begin_drag(
+        &mut self,
+        finger: f32,
+        now: f64,
+        limit: Option<f32>,
+        press: PressStart,
+    ) {
+        let carried = self.fling;
         self.fling = 0.0;
         self.over_vel = 0.0;
         // A finger that catches a springing overscroll holds it where it is:
@@ -273,22 +299,30 @@ impl Inner {
             last: finger,
             samples: vec![(now, finger)],
             last_move: now,
+            down: press.at,
+            start: press.pos,
+            carried,
         });
         self.moved(now);
     }
 
-    /// The finger moved to `finger`.
-    pub(crate) fn drag_to(&mut self, finger: f32, now: f64, limit: Option<f32>) {
+    /// The finger moved to `finger`; the content moves `factor` times as
+    /// far (two fingers).
+    pub(crate) fn drag_to(&mut self, finger: f32, now: f64, limit: Option<f32>, factor: f32) {
         let Some(mut drag) = self.drag.take() else {
             return;
         };
-        let delta = finger - drag.last;
+        let delta = (finger - drag.last) * factor;
         drag.last = finger;
         if delta != 0.0 {
             drag.last_move = now;
         }
         drag.samples.push((now, finger));
-        drag.samples.retain(|&(t, _)| t >= now - SAMPLE_WINDOW);
+        drag.samples.retain(|&(t, _)| t >= now - SAMPLE_KEEP);
+        if drag.samples.len() > SAMPLE_MAX {
+            let extra = drag.samples.len() - SAMPLE_MAX;
+            drag.samples.drain(..extra);
+        }
         self.drag = Some(drag);
         if delta == 0.0 {
             return;
@@ -321,10 +355,17 @@ impl Inner {
     /// The finger lifted. It flings when it was moving, springs back when
     /// past an end; `clocked` says whether the router is given time at all
     /// (without it, the content returns to the end at once).
-    pub(crate) fn release(&mut self, now: f64, theme: &ScrollTheme, clocked: bool) {
-        let Some(drag) = self.drag.take() else {
-            return;
-        };
+    ///
+    /// `pair` says the fingers lifted as a pair. Returns the release, when
+    /// it was not past an end.
+    pub(crate) fn release(
+        &mut self,
+        now: f64,
+        p: &FlingProfile,
+        clocked: bool,
+        pair: bool,
+    ) -> Option<Release> {
+        let drag = self.drag.take()?;
         self.over_raw = 0.0;
         if self.over != 0.0 {
             if !clocked {
@@ -332,18 +373,20 @@ impl Inner {
             }
             self.over_vel = 0.0;
             self.moved(now);
-            return;
+            return None;
         }
-        let rested = now - drag.last_move > f64::from(theme.rest);
-        let (first, last) = (drag.samples.first(), drag.samples.last());
-        let velocity = match (first, last) {
-            (Some(&(t0, p0)), Some(&(t1, p1))) if t1 > t0 => (p1 - p0) / (t1 - t0) as f32,
-            _ => 0.0,
+        let gesture = Gesture {
+            samples: &drag.samples,
+            down: drag.down,
+            last_move: drag.last_move,
+            travel: (drag.last - drag.start).abs(),
+            carried: drag.carried,
+            pair,
         };
-        if !rested && velocity.abs() > theme.min_fling {
-            self.fling = velocity.clamp(-theme.max_fling, theme.max_fling);
-        }
+        let release = p.release(&gesture, now);
+        self.fling = release.v;
         self.moved(now);
+        Some(release)
     }
 
     /// The finger went away without lifting (a layer opened, the pane was
@@ -359,12 +402,13 @@ impl Inner {
         dt: f32,
         now: f64,
         theme: &ScrollTheme,
+        p: &FlingProfile,
         limit: Option<f32>,
     ) -> bool {
         if self.drag.is_some() {
             return false;
         }
-        let dt = dt.clamp(0.0, 0.1);
+        let dt = dt.clamp(0.0, p.dt_max);
         if dt == 0.0 {
             return false;
         }
@@ -380,7 +424,7 @@ impl Inner {
                 x = x.clamp(-d, d);
             }
             let crossed = x != 0.0 && x0 != 0.0 && x.signum() != x0.signum();
-            if crossed || (x.abs() < SNAP && v.abs() < theme.min_fling) {
+            if crossed || (x.abs() < SNAP && v.abs() < p.min_speed) {
                 x = 0.0;
                 v = 0.0;
             }
@@ -405,8 +449,8 @@ impl Inner {
             self.moved(now);
             return true;
         }
-        self.fling *= (-theme.fling_decay * dt).exp();
-        if self.offset == before || self.fling.abs() < theme.min_fling || self.following {
+        self.fling *= (-p.decay * dt).exp();
+        if self.offset == before || self.fling.abs() < p.min_speed || self.following {
             self.fling = 0.0;
         }
         if self.offset != before {
@@ -416,8 +460,8 @@ impl Inner {
     }
 
     /// How visible the indicator is at `now`, 0 to 1.
-    pub(crate) fn indicator_alpha(&self, now: f64, theme: &ScrollTheme) -> f32 {
-        if self.drag.is_some() || self.is_coasting(theme) {
+    pub(crate) fn indicator_alpha(&self, now: f64, theme: &ScrollTheme, p: &FlingProfile) -> f32 {
+        if self.drag.is_some() || self.is_coasting(p) {
             return 1.0;
         }
         let since = (now - self.last_moved) as f32;
@@ -527,6 +571,8 @@ pub struct ScrollPane {
     scrollbar: Option<(ScrollbarOptions, Arc<ScrollbarState>)>,
     /// Its content as sections drawn by their source.
     sections: Option<Arc<SectionedContent>>,
+    /// Its overrides of the theme's fling.
+    fling: FlingOptions,
 }
 
 impl fmt::Debug for ScrollPane {
@@ -553,6 +599,7 @@ impl ScrollPane {
             background: None,
             scrollbar: None,
             sections: None,
+            fling: FlingOptions::default(),
         };
         pane.state.with(|s| s.axis = axis);
         pane
@@ -633,6 +680,25 @@ impl ScrollPane {
         }
         self.sections = Some(sections);
         self
+    }
+
+    /// Its fling: `options` override the theme's
+    /// [`ScrollTheme::fling`](crate::ScrollTheme::fling) (nothing by
+    /// default); `FlingOptions::from(profile)` replaces it whole.
+    #[must_use]
+    pub fn with_fling(mut self, options: FlingOptions) -> Self {
+        self.fling = options;
+        self
+    }
+
+    /// Its fling options.
+    pub fn fling_options(&self) -> &FlingOptions {
+        &self.fling
+    }
+
+    /// Its fling profile against `theme`.
+    pub fn fling_profile(&self, theme: &ScrollTheme) -> FlingProfile {
+        self.fling.with_theme(&theme.fling)
     }
 
     /// Its sections, when it has them.
@@ -723,7 +789,7 @@ impl ScrollPane {
             (
                 s.offset(),
                 s.content,
-                s.is_dragged() || s.is_coasting(theme),
+                s.is_dragged() || s.is_coasting(&self.fling_profile(theme)),
                 now - s.last_moved(),
             )
         });
@@ -738,9 +804,15 @@ impl ScrollPane {
     /// Draw the indicator along the viewport's trailing edge.
     pub(crate) fn draw_indicator(&self, list: &mut DrawList, theme: &ScrollTheme, now: f64) {
         let vp = self.viewport.get();
-        let (alpha, content, max, drawn) = self
-            .state
-            .with(|s| (s.indicator_alpha(now, theme), s.content, s.max, s.drawn()));
+        let (alpha, content, max, drawn) = self.state.with(|s| {
+            let p = self.fling_profile(theme);
+            (
+                s.indicator_alpha(now, theme, &p),
+                s.content,
+                s.max,
+                s.drawn(),
+            )
+        });
         let (_, len) = self.axis.span(vp);
         if alpha <= 0.0 || max <= 0.0 || content <= len {
             return;
@@ -877,27 +949,43 @@ mod tests {
     #[test]
     fn a_drag_past_the_end_resists_and_never_reaches_the_limit() {
         let mut s = state(3000.0, 1000.0);
-        s.begin_drag(500.0, 0.0, Some(100.0));
+        s.begin_drag(
+            500.0,
+            0.0,
+            Some(100.0),
+            PressStart {
+                at: 0.0,
+                pos: 500.0,
+            },
+        );
         // Down by 200 px at the start: past it.
-        s.drag_to(700.0, 0.0, Some(100.0));
+        s.drag_to(700.0, 0.0, Some(100.0), 1.0);
         assert_eq!(s.offset, 0.0);
         assert!(s.over < 0.0 && s.over > -100.0, "{}", s.over);
         assert!(s.over.abs() < 200.0);
-        s.drag_to(100_000.0, 0.0, Some(100.0));
+        s.drag_to(100_000.0, 0.0, Some(100.0), 1.0);
         assert!(s.over > -100.0);
         // Back up: the overscroll goes first, then the offset.
-        s.drag_to(500.0, 0.0, Some(100.0));
+        s.drag_to(500.0, 0.0, Some(100.0), 1.0);
         assert_eq!(s.over, 0.0);
         assert_eq!(s.offset, 0.0);
-        s.drag_to(400.0, 0.0, Some(100.0));
+        s.drag_to(400.0, 0.0, Some(100.0), 1.0);
         assert_eq!(s.offset, 100.0);
     }
 
     #[test]
     fn without_overscroll_it_stops_dead() {
         let mut s = state(3000.0, 1000.0);
-        s.begin_drag(500.0, 0.0, Some(100.0));
-        s.drag_to(900.0, 0.0, None);
+        s.begin_drag(
+            500.0,
+            0.0,
+            Some(100.0),
+            PressStart {
+                at: 0.0,
+                pos: 500.0,
+            },
+        );
+        s.drag_to(900.0, 0.0, None, 1.0);
         assert_eq!((s.offset, s.over), (0.0, 0.0));
     }
 
@@ -905,12 +993,20 @@ mod tests {
     fn an_overscroll_springs_back_to_the_end() {
         let theme = ScrollTheme::default();
         let mut s = state(3000.0, 1000.0);
-        s.begin_drag(500.0, 0.0, Some(100.0));
-        s.drag_to(700.0, 0.0, Some(100.0));
-        s.release(0.0, &theme, true);
+        s.begin_drag(
+            500.0,
+            0.0,
+            Some(100.0),
+            PressStart {
+                at: 0.0,
+                pos: 500.0,
+            },
+        );
+        s.drag_to(700.0, 0.0, Some(100.0), 1.0);
+        s.release(0.0, &theme.fling, true, false);
         let mut t = 0.0;
         let mut steps = 0;
-        while s.tick(0.016, t, &theme, Some(100.0)) {
+        while s.tick(0.016, t, &theme, &theme.fling, Some(100.0)) {
             t += 0.016;
             steps += 1;
             assert!(s.over <= 0.0, "a critically damped spring does not cross");
@@ -924,16 +1020,24 @@ mod tests {
     fn a_fling_decays_to_a_stop_and_one_after_a_rest_does_not_start() {
         let theme = ScrollTheme::default();
         let mut s = state(20_000.0, 1000.0);
-        s.begin_drag(1500.0, 0.0, None);
+        s.begin_drag(
+            1500.0,
+            0.0,
+            None,
+            PressStart {
+                at: 0.0,
+                pos: 1500.0,
+            },
+        );
         for i in 1..=6 {
-            s.drag_to(1500.0 - 100.0 * i as f32, 0.016 * f64::from(i), None);
+            s.drag_to(1500.0 - 100.0 * i as f32, 0.016 * f64::from(i), None, 1.0);
         }
-        s.release(0.1, &theme, true);
+        s.release(0.1, &theme.fling, true, false);
         assert!(s.fling < 0.0, "{}", s.fling);
         let after = s.offset;
         let mut t = 0.1;
         let mut steps = 0;
-        while s.tick(0.016, t, &theme, None) {
+        while s.tick(0.016, t, &theme, &theme.fling, None) {
             t += 0.016;
             steps += 1;
             assert!(steps < 10_000);
@@ -941,11 +1045,19 @@ mod tests {
         assert!(s.offset > after && s.offset <= s.max);
 
         let mut s = state(20_000.0, 1000.0);
-        s.begin_drag(1500.0, 0.0, None);
+        s.begin_drag(
+            1500.0,
+            0.0,
+            None,
+            PressStart {
+                at: 0.0,
+                pos: 1500.0,
+            },
+        );
         for i in 1..=6 {
-            s.drag_to(1500.0 - 100.0 * i as f32, 0.016 * f64::from(i), None);
+            s.drag_to(1500.0 - 100.0 * i as f32, 0.016 * f64::from(i), None, 1.0);
         }
-        s.release(0.096 + 0.2, &theme, true);
+        s.release(0.096 + 0.2, &theme.fling, true, false);
         assert_eq!(s.fling, 0.0, "the finger rested before lifting");
     }
 
@@ -958,7 +1070,7 @@ mod tests {
         let mut t = 0.0;
         let mut went_past = false;
         let mut steps = 0;
-        while s.tick(0.016, t, &theme, Some(100.0)) {
+        while s.tick(0.016, t, &theme, &theme.fling, Some(100.0)) {
             t += 0.016;
             went_past |= s.over > 0.0;
             steps += 1;
@@ -972,11 +1084,18 @@ mod tests {
     fn the_indicator_stays_then_fades() {
         let theme = ScrollTheme::default();
         let mut s = state(3000.0, 1000.0);
-        assert_eq!(s.indicator_alpha(0.0, &theme), 0.0, "never moved");
+        assert_eq!(
+            s.indicator_alpha(0.0, &theme, &theme.fling),
+            0.0,
+            "never moved"
+        );
         s.scroll_to(100.0, 1.0);
-        assert_eq!(s.indicator_alpha(1.4, &theme), 1.0);
-        let mid = s.indicator_alpha(1.0 + 0.5 + 0.075, &theme);
+        assert_eq!(s.indicator_alpha(1.4, &theme, &theme.fling), 1.0);
+        let mid = s.indicator_alpha(1.0 + 0.5 + 0.075, &theme, &theme.fling);
         assert!(mid > 0.4 && mid < 0.6, "{mid}");
-        assert_eq!(s.indicator_alpha(1.0 + 0.5 + 0.2, &theme), 0.0);
+        assert_eq!(
+            s.indicator_alpha(1.0 + 0.5 + 0.2, &theme, &theme.fling),
+            0.0
+        );
     }
 }

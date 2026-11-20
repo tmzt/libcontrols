@@ -2,6 +2,7 @@
 
 pub use crate::drawer::DrawerTheme;
 pub use crate::editable_label::EditableLabelTheme;
+pub use crate::fling::FlingProfile;
 pub use crate::popup_menu::PopupMenuTheme;
 pub use crate::scrollbar::ScrollbarTheme;
 
@@ -69,14 +70,6 @@ pub struct ScrollTheme {
     pub touch_slop: f32,
     /// Pixels per wheel notch.
     pub wheel_line: f32,
-    /// A fling's speed falls to `e^-fling_decay` of itself each second.
-    pub fling_decay: f32,
-    /// Slower than this (px/s), a fling stops or does not start.
-    pub min_fling: f32,
-    /// The fastest fling (px/s).
-    pub max_fling: f32,
-    /// A finger resting this long (s) before it lifts does not fling.
-    pub rest: f32,
     /// The overscroll spring's angular frequency (rad/s), critically damped.
     pub overscroll_spring: f32,
     /// The indicator's thickness.
@@ -91,6 +84,11 @@ pub struct ScrollTheme {
     pub indicator_idle: f32,
     /// How long (s) the indicator takes to fade.
     pub indicator_fade: f32,
+    /// Every pane's fling: its release, decay, two-finger factor, flicks
+    /// and stop ([`FlingProfile::flankr`] by default; 0.11.0's is
+    /// [`FlingProfile::classic`]). A pane's `FlingOptions` override it
+    /// (docs/design/20261119_01_RIBBON_TWO_FINGER_AND_THUMB_LABEL_PLAN.md).
+    pub fling: FlingProfile,
 }
 
 impl Default for ScrollTheme {
@@ -98,10 +96,6 @@ impl Default for ScrollTheme {
         Self {
             touch_slop: 8.0,
             wheel_line: 48.0,
-            fling_decay: 3.2,
-            min_fling: 30.0,
-            max_fling: 8000.0,
-            rest: 0.100,
             overscroll_spring: 12.0,
             indicator_width: 4.0,
             indicator_inset: 2.0,
@@ -109,6 +103,7 @@ impl Default for ScrollTheme {
             indicator_color: [0.55, 0.62, 0.70, 0.5],
             indicator_idle: 0.5,
             indicator_fade: 0.150,
+            fling: FlingProfile::flankr(),
         }
     }
 }
