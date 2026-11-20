@@ -588,3 +588,16 @@ its count reported", and a router test checks that a one-finger tap
 through a host using the tracker gives the same `Click` as without it.
 `Router::fingers()` reads the count the host last set, and
 `set_fingers` tells routers nested in the router too.
+
+## 2026-11-19 19:47 EST — Setting the classic fling on a non-exhaustive ScrollTheme (plan 20261119_01_RIBBON_TWO_FINGER_AND_THUMB_LABEL_PLAN, steps 4 and 8)
+
+A small departure from the 18:31 EST amendment, item 9: `ScrollTheme` is
+`#[non_exhaustive]`, so the struct expression it gives,
+`ScrollTheme { fling: FlingProfile::classic(), ..ScrollTheme::default() }`,
+does not compile outside libcontrols. An app sets the field on a default
+instead (`let mut t = ScrollTheme::default(); t.fling =
+FlingProfile::classic();`), or gives one pane
+`ScrollPane::with_fling(FlingOptions::from(FlingProfile::classic()))`;
+`VERSIONS.md` says so. Also added for the per-pane override:
+`ScrollPane::fling_options` and `ScrollPane::fling_profile(&ScrollTheme)`
+(the profile resolved against a theme).
