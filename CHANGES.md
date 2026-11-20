@@ -558,3 +558,33 @@ interface the plan names.
    leaves `min_speed / decay` (15 px by default) short of the target; the
    added `min_speed` brings it onto the target at speed, where it is set
    exactly, instead of snapping that distance at the end.
+
+## 2026-11-19 19:42 EST — TouchTracker passes one finger through to the host's mapping (plan 20261119_01_RIBBON_TWO_FINGER_AND_THUMB_LABEL_PLAN, step 3)
+
+A departure from section 4.2, on the owner's answer (2026-11-19, relayed by
+the ShotToss coordinator): "shouldn't it fall through to the underlying
+tap/click detection? it already works". Section 4.2 has the tracker give
+`Down` for the first finger and replace the host's mouse mapping. The
+`Click` a tap gives comes from the host's own touch mapping (flankr's
+drawer sends `Up` and then, within its slop, `Click`); the router does not
+make one. So the tracker is narrower:
+
+1. While a gesture has had only one finger, `TouchOutput::pass_through` is
+   true and `events` is empty: the host's existing mapping delivers
+   `Down`, `Drag`, `Up` and its `Click` exactly as before.
+2. From the second finger's touch-down to the gesture's last lift,
+   `pass_through` is false: the tracker gives the `Drag`s at the summed
+   mean position and the final `Up` (also on `Cancelled`), and the host
+   delivers those instead of its own and drops its own press, so no
+   `Click`.
+3. `fingers` is reported on every change, as planned, and the host calls
+   `Router::set_fingers` with it.
+
+`TouchOutput` gains the field `pass_through: bool` (it is
+`#[non_exhaustive]`), and `TouchTracker::fingers()` reads the count.
+Step 3's **Done when:** item "one finger down, moving and up giving
+`Down`, `Drag`, `Up`" becomes "one finger passing through with no events,
+its count reported", and a router test checks that a one-finger tap
+through a host using the tracker gives the same `Click` as without it.
+`Router::fingers()` reads the count the host last set, and
+`set_fingers` tells routers nested in the router too.
