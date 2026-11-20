@@ -208,6 +208,13 @@ pub struct EventContext {
     pub state: NodeState,
     /// Where the modal handling the event is on its stack (set by the stack).
     pub layer: Option<LayerView>,
+    /// The fingers down when the event was delivered, as the host last
+    /// told the router ([`Router::set_fingers`](crate::Router::set_fingers));
+    /// 0 or 1 is the plain pointer.
+    pub fingers: u8,
+    /// The router clock's time when the count last went from 2 or more to
+    /// fewer, if it has.
+    pub pair_lifted_at: Option<f64>,
 }
 
 impl EventContext {

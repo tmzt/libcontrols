@@ -34,6 +34,7 @@ pub mod symbol;
 pub mod text_area;
 pub mod theme;
 pub mod tooltip;
+pub mod touch;
 pub mod traits;
 
 pub use arrow_label::{ArrowLabel, ArrowLabelActive, ArrowLabelState};
@@ -97,6 +98,7 @@ pub use symbol::Symbol;
 pub use text_area::{TextArea, TextAreaState};
 pub use theme::{ControlTheme, MarkdownOptions, MarkdownResolved, MarkdownTheme, ScrollTheme};
 pub use tooltip::{LABEL_SEPARATOR, TooltipStyle, draw_tooltip, split_label};
+pub use touch::{TouchOutput, TouchPhase, TouchTracker};
 pub use traits::{DrawContext, DrawControl};
 
 #[cfg(test)]

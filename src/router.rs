@@ -160,6 +160,12 @@ pub struct Router {
     bar_drag: Cell<Option<(usize, MouseButton)>>,
     /// The `Click` to drop: it ends a press a pane took.
     drop_click: Cell<Option<MouseButton>>,
+    /// The fingers down, as the host last said.
+    fingers: Cell<u8>,
+    /// When the count last went from 2 or more to fewer, on router time.
+    pair_lifted_at: Cell<Option<f64>>,
+    /// The press in progress has had 2 or more fingers: it is no tap.
+    multi_press: Cell<bool>,
 }
 
 /// Who receives input at the root: the app's nodes, or a layer of the modal
@@ -855,6 +861,20 @@ impl Router {
         if let Some(resp) = self.run_filters(InputEvent::Mouse(event)) {
             return resp;
         }
+        match event {
+            MouseEvent::Down { .. } => self.multi_press.set(self.fingers.get() >= 2),
+            // Two fingers are never a tap (flankr's `Drag::multi`).
+            MouseEvent::Click { .. } if self.multi_press.replace(false) => {
+                self.press_belongs_elsewhere(&event);
+                if let MouseEvent::Click { button, .. } = event
+                    && self.drop_click.get() == Some(button)
+                {
+                    self.drop_click.set(None);
+                }
+                return EventResponse::consumed(None, self.focused());
+            }
+            _ => {}
+        }
         if self.press_belongs_elsewhere(&event) {
             return EventResponse::consumed(None, self.focused());
         }
@@ -1319,7 +1339,37 @@ impl Router {
             .with_press_modifiers(press);
         ctx.flags = node.flags;
         ctx.state = node.state.get();
+        ctx.fingers = self.fingers.get();
+        ctx.pair_lifted_at = self.pair_lifted_at.get();
         ctx
+    }
+
+    /// How many fingers are down now; the host calls it when the count
+    /// changes (a [`TouchTracker`](crate::TouchTracker) says when), before
+    /// delivering the events of that touch. 0 or 1 is the plain pointer.
+    /// Every [`EventContext`] carries the count and when a pair last
+    /// lifted; a press that saw 2 or more fingers gives no `Click`. Routers
+    /// nested in this one are told too.
+    pub fn set_fingers(&self, count: u8) {
+        let before = self.fingers.get();
+        if before >= 2 && count < 2 {
+            self.pair_lifted_at.set(Some(self.time.get()));
+        }
+        if count >= 2 {
+            self.multi_press.set(true);
+        }
+        self.fingers.set(count);
+        for node in self.nodes.iter().flatten() {
+            let any: &dyn Any = node.control.as_ref();
+            if let Some(inner) = any.downcast_ref::<Router>() {
+                inner.set_fingers(count);
+            }
+        }
+    }
+
+    /// The fingers down, as last set.
+    pub fn fingers(&self) -> u8 {
+        self.fingers.get()
     }
 
     /// The nodes under `pos`, outermost first, each with the part it gave:
