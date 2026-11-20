@@ -1166,3 +1166,99 @@ recorded here; this amendment supersedes it as well.
 2. **10:** the crate is 0.11.0, a minor release because the libmsdf move
    is not semver-compatible (Rule 5.5); no libcontrols type or signature
    changes.
+
+## Amendment — 2026-11-19 20:03 EST: ribbon sections, two fingers, fling profiles and the thumb label (sections 4.7, 5, 6.12, 6.17, 6.18, 8, 10, 11)
+
+Plan `docs/design/20261119_01_RIBBON_TWO_FINGER_AND_THUMB_LABEL_PLAN.md`
+with both its amendments and the departures recorded in `CHANGES.md`,
+release 0.12.0 (`v0.12.0`). This extends sections 4.7, 6.12, 6.17 and
+6.18 as amended at 2026-10-28 23:26 EDT and 2026-10-29 00:07 EDT and adds
+a section 6.20; it replaces section 8.2's `fling_decay`, `min_fling`,
+`max_fling` and `rest` (removed), the version in section 10 and the
+test counts in section 11.
+
+1. **4.7:** the router keeps the finger count the host gives with
+   `Router::set_fingers(u8)` (read back by `fingers()`, passed on to nested
+   routers) and the router time a pair last lifted (the count going from 2
+   or more to fewer). A press that saw 2 or more fingers sends no `Click`.
+   While 2 or more fingers are down a pane's drag moves the offset by its
+   fling profile's `two_finger_factor` times the pointer's movement, and
+   at 1x again once one is left. On a pane's release the profile measures
+   the speed, curves it, multiplies it for a pair lifted within
+   `two_finger_lift`, adds the boost and caps it; with sections, its
+   `stop` may move a distance fling's end onto a boundary
+   (`FlingStop::Boundary`) or give a flick a counted flight
+   (`FlingStop::Count`), an ease-out onto a target held by id through
+   height changes, removals, splits and merges. `Router::advance` brings
+   flights' targets up to date before moving them. Each range update of a
+   pane with sections works out its `SectionWindow` (none while its thumb
+   is held), and its scrollbar counts the content's pending length.
+2. **5:** `EventContext` gains `fingers: u8` and `pair_lifted_at:
+   Option<f64>` (appended).
+3. **6.12:** `ScrollPane::with_fling(FlingOptions)`, `fling_options()`
+   and `fling_profile(&ScrollTheme) -> FlingProfile`.
+   `ScrollState::take_fling_events() -> Vec<FlingEvent>` (`Counted
+   { target, n }`, `Passed { id, remaining }`, `Retargeted { target }`,
+   `Landed { id }`) and `ScrollState::flight() -> Option<(SectionId,
+   u32)>` (the target and the boundaries still to pass).
+4. **6.17:** `ScrollbarOptions::thumb_label(bool)`, `skip_count(bool)`
+   and `snap_to_bookmarks(bool)` (per instance, off by default);
+   `ScrollbarState::thumb_label() -> Option<(SectionId, BookmarkText)>`
+   and `thumb_label_alpha()`. The label is a pill left of the thumb
+   (`thumb_label_gap` from it, centred on it, kept in the track, its text
+   cut to half the track less its padding), shown while the thumb is
+   shown and not held, while scrolling and `hold` after, fading over
+   `fade`; during a counted flight it names the target at full opacity,
+   with "↓ n" or "↑ n" under `skip_count`. Pills are drawn at their
+   bookmark's size and placed largest first, then nearest the thumb
+   first; `BookmarkPill::font_size` is appended.
+   `ScrollbarEvent::Snapped { id, offset }` is sent the first time a
+   scrub snaps to a bookmark's section top.
+5. **6.18:** `Section` gains `placeholder: bool` and `level: u8`
+   (appended), `Section::placeholder(id)` and `Section::level(u8)` (0-7,
+   `MAX_LEVEL`). `SectionedContent::set_placeholder_height` (96.0,
+   `DEFAULT_PLACEHOLDER_HEIGHT`), `placeholder_height`, `set_estimate`,
+   `edit(|e: &mut SectionEdit| ..)` (`push`, `insert`, `remove`,
+   `set_height`, `set_estimate`, `index_of`, `len`, `is_empty`,
+   `split`, `merge`, `add_bookmark`, `add_bookmark_with`,
+   `remove_bookmark`), rebuilding the tops once a batch; `take_window`,
+   `window`, `set_window_margins` (1, 5, 20); `set_pending_length`,
+   `pending_length`; `add_bookmark_with(id, Bookmark)`, `bookmarks_with`;
+   `set_label_format(Option<LabelFormat>)` with `LabelRequest { section,
+   index, purpose }` and `LabelPurpose` (`Top`, `Target`). A split or
+   merged section's place goes to its replacement for anchoring and
+   flights.
+6. **6.20 Touch and flings (`src/touch.rs`, `src/fling.rs`):**
+   `TouchTracker::touch(id, TouchPhase, pos) -> TouchOutput { events,
+   fingers, pass_through }`: one finger passes through to the host's own
+   mapping; from a second finger to the last lift the tracker gives the
+   `Drag`s at the fingers' summed mean position and the `Up`.
+   `FlingProfile` (`flankr()`, the default, and `classic()`, 0.11.0's)
+   with its fields and clamping setters, `SpeedFit`, `FlingOptions`,
+   `FlingStop` (`Free`, `boundary(Boundaries)`, `count(Boundaries,
+   SkipMapping)`), `Boundaries` (`Sections`, `AtMost(n)`, `Bookmarked`),
+   `SkipMapping` (`count`, `duration`) and `FlingEvent`.
+7. **8:** `ScrollTheme::fling: FlingProfile` (`flankr()`) replaces
+   `fling_decay`, `min_fling`, `max_fling` and `rest` (now `fling.decay`,
+   `fling.min_speed`, `fling.max_release_speed`, `fling.rest`; the 0.1 s
+   clamp of a fling's frame is `fling.dt_max`). `ScrollbarTheme` appends
+   `thumb_label_font_size` 13, `thumb_label_pad_x` 12, `thumb_label_pad_y`
+   4, `thumb_label_gap` 8, `thumb_label_bg_alpha` 0.85,
+   `thumb_label_text_alpha` 1.0, `thumb_label_bg` and `thumb_label_color`
+   (`None`: `bg_color`, `text_color`), `bookmark_scale_small` 0.85,
+   `bookmark_scale_large` 1.30 and `snap_distance` 16, each with a
+   `ScrollbarOptions` override and a `ScrollbarResolved` value;
+   `ScrollbarResolved::bookmark_size(BookmarkSize)`. `FlingOptions`
+   resolves to the `FlingProfile` itself, not a separate resolved type.
+8. **10:** the crate is 0.12.0, a minor release: `ScrollTheme`'s four
+   fling fields are removed and flankr's fling is the default. New
+   `#[non_exhaustive]` types: `SectionWindow`, `TouchOutput`,
+   `FlingProfile`, `SpeedFit`, `FlingOptions`, `FlingStop` (and its
+   `Boundary` and `Count` variants), `Boundaries`, `SkipMapping`,
+   `FlingEvent` (and its variants), `BookmarkScale`, `BookmarkSize`,
+   `Bookmark`, `LabelPurpose`, `LabelRequest`. `TouchPhase` is exhaustive.
+9. **11:** unit tests added: 6 in `src/sections.rs`, 5 in
+   `src/touch.rs`, 7 in `src/fling.rs`, 4 in `src/scrollbar/mod.rs`.
+   Integration tests added: 6 in `tests/sections.rs`, 6 in
+   `tests/scroll.rs`, 9 in `tests/scrollbar.rs`, and the new
+   `tests/touch.rs` (3) and `tests/fling.rs` (16), in every build.
