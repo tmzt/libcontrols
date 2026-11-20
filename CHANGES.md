@@ -626,3 +626,26 @@ Small departures and readings of the 18:31 EST amendment, items 3 to 5:
    is added, for the thumb label and for apps.
 5. Step 5's **Done when:** items on the thumb label during a flight and on
    `skip_count` are tested with step 6, where the label is built.
+
+## 2026-11-19 20:00 EST — The thumb label and bookmark sizes as built (plan 20261119_01_RIBBON_TWO_FINGER_AND_THUMB_LABEL_PLAN, step 6)
+
+Small additions and readings of section 5 and the 18:34 EST amendment:
+
+1. `ScrollbarState::thumb_label` returns the label only while it is drawn
+   (its alpha above 0); `ScrollbarState::thumb_label_alpha` gives that
+   alpha. With a formatter set the label is the formatter's text for the
+   section at the window's top (or the flight's target) and always shows
+   while visible; without one it is the last bookmark at or above.
+2. Added beside the named API: `SectionEdit::add_bookmark_with`, the type
+   alias `LabelFormat` for the formatter's `Arc`,
+   `ScrollbarResolved::bookmark_size(BookmarkSize) -> f32`, and the field
+   `BookmarkPill::font_size` (appended to the `#[non_exhaustive]`
+   struct). `placed_bookmarks` (crate-internal) carries the `Bookmark`.
+3. The step's "GPU-free draw test that the label's `DrawList` holds one
+   rounded box and its text": a `DrawContext` with no atlas measures text
+   but draws no glyphs, so the test checks one rounded box in the list and
+   the laid-out text beside it.
+4. The label pill's height uses `bookmark_line_height` (1.35) with the
+   label's own font size and padding, as the bookmark pills do; the pill
+   nearest the thumb is the nearest among the pills shown after crowding,
+   which for equal sizes is 0.11.0's rule.
