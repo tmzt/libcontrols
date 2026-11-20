@@ -601,3 +601,28 @@ FlingProfile::classic();`), or gives one pane
 `VERSIONS.md` says so. Also added for the per-pane override:
 `ScrollPane::fling_options` and `ScrollPane::fling_profile(&ScrollTheme)`
 (the profile resolved against a theme).
+
+## 2026-11-19 19:53 EST — Counted flights as built (plan 20261119_01_RIBBON_TWO_FINGER_AND_THUMB_LABEL_PLAN, step 5)
+
+Small departures and readings of the 18:31 EST amendment, items 3 to 5:
+
+1. "After the section at the window's top" is read as the boundaries
+   strictly past the offset in the flick's direction (more than 0.5 px):
+   going on from inside section k the first is k + 1's top, going back the
+   first is k's own top. A target whose top is past the range's end lands
+   at the end.
+2. Flicks adding up (item 4): the boundaries still to pass are counted
+   again from the offset at the new release up to the stopped flight's
+   target, since the second flick's own drag may already have passed some,
+   and the new flick's count is added to them, capped at
+   `two_finger_max`. Counting the stopped flight's remainder alone would
+   overshoot by the boundaries the drag crossed.
+3. Events (item 5): an added flick sends `Retargeted` in place of
+   `Counted`. `Passed` is sent for every boundary of the flight, the
+   target included (`remaining: 0`), and then `Landed`. A `Boundary`
+   landing sends `Landed` too. A target at an end of the range names the
+   last (or first) section.
+4. `ScrollState::flight()` (the target and the boundaries still to pass)
+   is added, for the thumb label and for apps.
+5. Step 5's **Done when:** items on the thumb label during a flight and on
+   `skip_count` are tested with step 6, where the label is built.
