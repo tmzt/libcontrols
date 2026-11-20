@@ -526,3 +526,20 @@ fields are removed from `ScrollTheme` and the default fling changes.
   `bookmark_scale_small`, `bookmark_scale_large`, `snap_distance`;
   `ScrollbarResolved::bookmark_size`; `ScrollbarState::thumb_label`,
   `thumb_label_alpha`; `ScrollbarEvent::Snapped`; `BookmarkPill::font_size`.
+
+## 0.12.1 — 2026-11-20 (tag `v0.12.1`)
+
+CopyLabel, a label with a copy glyph
+(docs/design/20261120_01_COPY_LABEL_PLAN.md). Additive.
+
+- Added: the module `copy_label` with `CopyLabel` and `CopyLabelState`
+  (both re-exported at the crate root).
+- `CopyLabelState::new(text)`, `text()`, `set_text(text)`,
+  `take_copy() -> bool` (true once after the glyph was clicked or Enter or
+  Space pressed while focused).
+- `CopyLabel` (public fields `state`, `rect`, `align`, `font_size`,
+  `text_color`, `glyph_color`): `new(text, rect)`, `with_state`,
+  `with_font_size`, `with_align`, `with_text_color`, `with_glyph_color`,
+  `text`, `shown_text(&DrawContext)`, `handle`, the parts `COPY`
+  (`ControlPart::Custom(0x434C_0001)`) and `TEXT`; `DrawControl`,
+  `HostedControl` and `ReadValue<String>`.

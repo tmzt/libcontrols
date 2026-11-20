@@ -5,6 +5,7 @@
 pub mod arrow_label;
 pub mod button;
 pub mod control;
+pub mod copy_label;
 pub mod drawer;
 pub mod ease;
 pub mod edit;
@@ -41,6 +42,7 @@ pub mod traits;
 pub use arrow_label::{ArrowLabel, ArrowLabelActive, ArrowLabelState};
 pub use button::{Button, ButtonState};
 pub use control::{Control, HostedControl};
+pub use copy_label::{CopyLabel, CopyLabelState};
 pub use drawer::{
     Drawer, DrawerEdge, DrawerEvent, DrawerLayers, DrawerLayout, DrawerOptions, DrawerPhase,
     DrawerReason, DrawerResolved, DrawerRoute, DrawerSize, DrawerState, DrawerTheme, LayerPlan,

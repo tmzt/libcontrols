@@ -1262,3 +1262,35 @@ test counts in section 11.
    Integration tests added: 6 in `tests/sections.rs`, 6 in
    `tests/scroll.rs`, 9 in `tests/scrollbar.rs`, and the new
    `tests/touch.rs` (3) and `tests/fling.rs` (16), in every build.
+
+## Amendment — 2026-11-20 12:11 EST: CopyLabel (sections 6, 10, 11)
+
+Plan `docs/design/20261120_01_COPY_LABEL_PLAN.md`, release 0.12.1
+(`v0.12.1`); the commit is the one that adds `src/copy_label.rs`. This
+adds section 6.21 and extends sections 10 and 11; it replaces no earlier
+text except the version in section 10 and the test counts in 11.
+
+1. **6.21 `CopyLabel` (`src/copy_label.rs`).** One node over a shared
+   `CopyLabelState` (`new`, `text`, `set_text`, `take_copy`): one line of
+   text and, at its right end, a copy glyph (two overlapping squares, the
+   front one down-left whole and the back one up-right without its hidden
+   part: eight `push_line` segments). Laid out as `EditableLabel`'s
+   display mode: a `button_width` button at the right, the text in the
+   rest less `gap`, padded 4 px and centred on `LINE_BOX_RATIO`, its first
+   line cut with "…" to fit (`shown_text(&DrawContext)`), aligned Left,
+   Center or Right (`align`, `with_align`). Sizes and the glyph's colour
+   come from `ControlTheme::editable_label` (`button_width`, `gap`,
+   `icon_size`, `icon_thickness`; `pencil_color`, else
+   `muted_text_color`); there is no `CopyLabelTheme`. Per-instance
+   `font_size`, `text_color`, `glyph_color` (`with_font_size`,
+   `with_text_color`, `with_glyph_color`). Parts: `CopyLabel::COPY`
+   (`ControlPart::Custom(0x434C_0001)`), `TEXT` (`Label`), the gap `Body`.
+   A left `Click` on `COPY`, or Enter or Space down while focused, sets the
+   state's flag and returns `Activated { part: COPY }`; `take_copy` swaps
+   it back (seen once). A click on the text does nothing. `FOCUSABLE`;
+   the focused label draws the glowing ring. libcontrols has no
+   clipboard: the app copies `text()` when `take_copy` is true.
+   `ReadValue<String>` is the text.
+2. **10:** the crate is 0.12.1, additive.
+3. **11:** `tests/copy_label.rs` adds 8 integration tests, one of them
+   through a `ModalDialog`'s content.

@@ -1,7 +1,7 @@
 ---
 title: CopyLabel, a label with a copy glyph
 date: 2026-11-20
-status: Draft
+status: In implementation
 covers: "A new control, CopyLabel: a one-line label, cut with an ellipsis when too long, with the usual copy glyph (two overlapping squares drawn from line segments) at its right end. A click or tap on the glyph, or Enter or Space while it is focused, sets a one-shot flag on its shared CopyLabelState that the app takes with take_copy and answers with its own platform clipboard; libcontrols has no clipboard. Sized and coloured from EditableLabel's display mode and theme values; no new theme type. Additive: 0.12.1."
 sources:
   - "The owner (2026-11-20), in ShotToss's session, for its image details dialog: the filename shown \"as copyable label (label with copy glyph)\"; the request is the owner's approval of this plan and its build."
@@ -138,3 +138,11 @@ was drawn.
 
 None. A themed `CopyLabelTheme`, a "copied" confirmation state and a
 copyable multi-line text are left for a later plan if an app asks.
+
+## Amendment — 2026-11-20 12:11 EST: approved; implementation started, the document is now immutable
+
+The owner's request for ShotToss's details dialog is the approval of this
+plan. Implementation starts with this amendment, on `main` from `51b8fd3`:
+`status` is `In implementation`, and the body above is frozen (AGENTS.md
+Rule 1.5). The scope is every step, 1-3, released as **0.12.1**.
+Departures, if any, are recorded in `CHANGES.md`.
