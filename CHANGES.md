@@ -649,3 +649,13 @@ Small additions and readings of section 5 and the 18:34 EST amendment:
    label's own font size and padding, as the bookmark pills do; the pill
    nearest the thumb is the nearest among the pills shown after crowding,
    which for equal sizes is 0.11.0's rule.
+
+## 2026-11-20 12:09 EST — CopyLabel, a label with a copy glyph (plan 20261120_01_COPY_LABEL_PLAN)
+
+New planned work, asked for by the owner for ShotToss's image details
+dialog ("the filename ... as copyable label (label with copy glyph)") and
+approved by that request: a `CopyLabel` control in `src/copy_label.rs`
+with a shared `CopyLabelState` whose `take_copy` reports a click on the
+glyph or Enter/Space while focused; the app does the copying. Built on
+`EditableLabel`'s display mode and theme values, with no new theme type.
+Additive, released as 0.12.1.
