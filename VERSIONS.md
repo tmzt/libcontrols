@@ -475,3 +475,54 @@ call `cell()` itself.
   unchanged). A caller drawing with libcontrols moves its own libmsdf pin
   to the same rev, since a `DrawList` or `FontAtlas` from another rev is
   another type.
+
+## 0.12.0 — 2026-11-19 (tag `v0.12.0`)
+
+A ribbon of sections, two-finger flings, fling profiles and a label on
+the scroll thumb (docs/design/20261119_01_RIBBON_TWO_FINGER_AND_THUMB_LABEL_PLAN.md,
+both amendments, with the departures in `CHANGES.md`). A minor release:
+fields are removed from `ScrollTheme` and the default fling changes.
+
+- **Breaking:** `ScrollTheme::fling_decay`, `min_fling`, `max_fling` and
+  `rest` are removed; they are `ScrollTheme::fling` (a `FlingProfile`):
+  `fling.decay`, `fling.min_speed`, `fling.max_release_speed` and
+  `fling.rest`, and the 0.1 s clamp of a fling's frame is `fling.dt_max`.
+- **Breaking:** the default fling is flankr's (`FlingProfile::flankr()`:
+  a weighted-line release speed, a curve above 1000 px/s to the power
+  1.5, decay 2.0, frames of at most 1/30 s, a boost of a quick flick into
+  a running fling, a 16 000 px/s cap). For 0.11.0's feel set
+  `theme.scroll.fling = FlingProfile::classic()` on a default theme
+  (`ScrollTheme` is `#[non_exhaustive]`), or give a pane
+  `with_fling(FlingOptions::from(FlingProfile::classic()))`.
+- **Breaking:** a press that saw two or more fingers
+  (`Router::set_fingers`) gives no `Click`, and two fingers drag a pane
+  `two_finger_factor` (5) times as far; a host that never calls
+  `set_fingers` sees no change.
+- Added: `FlingProfile` (`flankr`, `classic`, a clamping setter per
+  field), `SpeedFit`, `FlingOptions` (`with_theme`, `From<FlingProfile>`),
+  `FlingStop` (`Free`, `boundary`, `count`), `Boundaries`, `SkipMapping`
+  (`count`, `duration`, setters), `FlingEvent`; `ScrollPane::with_fling`,
+  `fling_options`, `fling_profile`; `ScrollState::take_fling_events`,
+  `flight`.
+- Added: `Router::set_fingers`, `Router::fingers`; `EventContext::fingers`
+  and `pair_lifted_at`; `TouchTracker`, `TouchPhase`, `TouchOutput`
+  (`events`, `fingers`, `pass_through`).
+- Added: `Section::placeholder`, `Section::level`, the fields
+  `placeholder` and `level`, `MAX_LEVEL`, `DEFAULT_PLACEHOLDER_HEIGHT`;
+  `SectionedContent::edit` and `SectionEdit` (`push`, `insert`, `remove`,
+  `set_height`, `set_estimate`, `index_of`, `len`, `is_empty`, `split`,
+  `merge`, `add_bookmark`, `add_bookmark_with`, `remove_bookmark`);
+  `SectionedContent::set_estimate`, `set_placeholder_height`,
+  `placeholder_height`, `take_window`, `window`, `set_window_margins`,
+  `set_pending_length`, `pending_length`, `add_bookmark_with`,
+  `bookmarks_with`, `set_label_format`; `SectionWindow`, `Bookmark`,
+  `BookmarkSize`, `BookmarkScale`, `LabelRequest`, `LabelPurpose`,
+  `LabelFormat`.
+- Added: `ScrollbarOptions::thumb_label`, `skip_count`,
+  `snap_to_bookmarks`; `ScrollbarTheme`, `ScrollbarOptions` (with setters)
+  and `ScrollbarResolved`: `thumb_label_font_size`, `thumb_label_pad_x`,
+  `thumb_label_pad_y`, `thumb_label_gap`, `thumb_label_bg_alpha`,
+  `thumb_label_text_alpha`, `thumb_label_bg`, `thumb_label_color`,
+  `bookmark_scale_small`, `bookmark_scale_large`, `snap_distance`;
+  `ScrollbarResolved::bookmark_size`; `ScrollbarState::thumb_label`,
+  `thumb_label_alpha`; `ScrollbarEvent::Snapped`; `BookmarkPill::font_size`.
