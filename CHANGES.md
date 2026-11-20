@@ -525,3 +525,36 @@ length, a two-finger drag and fling with `TouchTracker` and
 `Router::set_fingers`, flings that land on a section top, and a label on
 the scrollbar thumb while scrolling with optional snapping. Additive, for
 0.11.1. No code until the owner approves the plan.
+
+## 2026-11-19 19:36 EST — Small departures in implementing plan 20261119_01_RIBBON_TWO_FINGER_AND_THUMB_LABEL_PLAN
+
+Departures needed to make the plan work (Rule 1.7); none changes an
+interface the plan names.
+
+1. Step 1 (section 3.2 and the 18:31 EST amendment, item 8):
+   `SectionEdit` also has `add_bookmark`, `remove_bookmark` and
+   `is_empty`. The amendment has the app add the new ids' bookmarks in the
+   same `edit`, but the batch holds the content's lock, so the content's
+   own `add_bookmark` cannot be called inside it; `is_empty` comes with
+   `len` (clippy's `len_without_is_empty`). `SectionedContent::set_estimate`
+   is added beside `set_height`, as section 3.1 refers to it, and the
+   constants `DEFAULT_PLACEHOLDER_HEIGHT` (96.0) and `MAX_LEVEL` (7) are
+   public.
+2. Step 5 (the 18:31 EST amendment, items 3 and 4): `FlingStop::Boundary`
+   and `FlingStop::Count` are `#[non_exhaustive]` variants, which code
+   outside the crate cannot build, so `FlingStop::boundary(Boundaries)` and
+   `FlingStop::count(Boundaries, SkipMapping)` construct them, and
+   `SkipMapping` has `Default` (the amendment's defaults) and one clamping
+   setter per field.
+3. Step 4 (the 18:31 EST amendment, item 1): a fling advances one plain
+   step a frame, as flankr and 0.11.0 do (the offset moves by the speed
+   times `min(dt, dt_max)`, then the speed decays). The distance therefore
+   depends slightly on the frame length: the default profile's fling at
+   1/60 s frames and at 1/10 s frames (stepped at `dt_max` 1/30 s) differ
+   by about 1.7%, and step 4's "the same distance" is tested within 2%.
+4. Step 5 (the 18:31 EST amendment, item 3, `Boundary`): the starting
+   speed is `(target - offset) · decay + min_speed`, not
+   `(target - offset) · decay`. A fling stops below `min_speed`, which
+   leaves `min_speed / decay` (15 px by default) short of the target; the
+   added `min_speed` brings it onto the target at speed, where it is set
+   exactly, instead of snapping that distance at the end.
