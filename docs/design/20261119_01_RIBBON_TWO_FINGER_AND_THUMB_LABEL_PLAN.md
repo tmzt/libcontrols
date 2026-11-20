@@ -1,7 +1,7 @@
 ---
 title: A ribbon of sections, two-finger flings and a label on the scroll thumb
 date: 2026-11-19
-status: Draft
+status: In implementation
 covers: "flankr's agent-view ribbon generalised onto SectionedContent (placeholder sections of a fixed height, batched edits, a window by index reported to the app for fetching, a pending length past the end), a two-finger drag and fling on ScrollPane fed by a TouchTracker that turns touches into the router's pointer events, an optional fling that lands on a section boundary, and a label on the scrollbar thumb while scrolling, from the bookmark of the section at the window's top, with optional snapping to bookmarks while scrubbing. Additive: libcontrols 0.11.1."
 sources:
   - "The owner (2026-11-19), in ShotToss's session: two-finger flick for rapid scrolling; the full listing is dynamic so there is no fixed ribbon size, and months start as fixed size sections that expand as data comes in; while scrolling the month dividers become scroll thumb labels; the ribbon/card based scrolling is in ~/src/flankr and might still need moving into libcontrols; then: write the plan for libcontrols, using the flankr code from a subagent or worktree."
@@ -1009,3 +1009,11 @@ and nearest first among equals; `AtMost(n)` counting the same tops
 whether or not other sections are split, and `Sections` counting every
 top. Step 1's and step 5's additions stand. The version stays 0.12.0; this
 amendment's changes are additive over the 18:31 EST amendment.
+
+## Amendment — 2026-11-19 19:36 EST: implementation started; the document is now immutable
+
+Implementation started with step 1 (placeholders, batched edits, levels,
+splits and merges), on the owner's approval of 2026-11-19 ("approve and
+build"). The status is `In implementation`, and this document is now
+immutable: it changes only on the owner's explicit instruction, and
+departures are recorded in `CHANGES.md`.

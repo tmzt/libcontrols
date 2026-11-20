@@ -615,3 +615,58 @@ fn a_pane_with_sections_and_a_scrollbar_draws_their_bookmarks_while_held() {
     assert!((centres[0] - VP.y).abs() < 1e-3, "{centres:?}");
     assert!((centres[1] - (VP.y + 600.0)).abs() < 1e-3, "{centres:?}");
 }
+
+// ---- Plan 20261119_01, step 1: batched edits, splits and merges ----
+
+#[test]
+fn a_batch_growing_ten_sections_above_the_window_moves_nothing_in_it() {
+    let mut list = uniform(30, 100.0, false);
+    for s in list.iter_mut().take(10) {
+        *s = Section::placeholder(s.id);
+    }
+    let f = Fixture::new(list, Counting::default(), plain());
+    f.router.scroll_to_section(f.pane, SectionId(20));
+    f.render();
+    // Where section 22 is in the window.
+    let at = |f: &Fixture| f.top(22) - f.offset();
+    let before = at(&f);
+    f.content.edit(|e| {
+        for i in 0..10 {
+            assert!(e.set_height(SectionId(i), 300.0));
+        }
+    });
+    f.render();
+    assert_eq!(at(&f), before, "nothing in the window moved");
+    assert_eq!(f.offset(), f.top(20));
+    assert_eq!(f.top(20), 3000.0 + 1000.0);
+}
+
+#[test]
+fn splitting_or_merging_the_anchoring_section_keeps_the_window_in_place() {
+    // Sections of 2000 in a 1000 window: section 5 alone is in view.
+    let f = Fixture::new(uniform(10, 2000.0, false), Counting::default(), plain());
+    f.router.scroll_to(f.pane, [0.0, 10_500.0]);
+    f.render();
+    f.content.edit(|e| {
+        e.split(
+            SectionId(5),
+            vec![
+                Section::new(SectionId(500), 1800.0).level(1),
+                Section::new(SectionId(501), 1800.0).level(2),
+            ],
+        )
+    });
+    f.render();
+    assert_eq!(f.offset(), 10_500.0, "500 from the run's top, as before");
+    f.content.edit(|e| {
+        e.merge(
+            SectionId(4),
+            SectionId(501),
+            Section::new(SectionId(400), 5000.0),
+        )
+    });
+    f.render();
+    assert_eq!(f.top(400), 8000.0);
+    assert_eq!(f.offset(), 10_500.0, "inside the merged section, unmoved");
+    assert_eq!(f.content.len(), 9);
+}

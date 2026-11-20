@@ -35,15 +35,55 @@ pub struct Section {
     pub height: f32,
     /// Whether `height` is an estimate.
     pub estimated: bool,
+    /// No height of its own: counted and drawn at the content's
+    /// [placeholder height](SectionedContent::set_placeholder_height)
+    /// until it is given one (`height` is then unused).
+    pub placeholder: bool,
+    /// The level of the boundary at this section's top, 0 the most
+    /// significant, at most 7. An ordering the app assigns; libcontrols
+    /// reads it only for [`Boundaries::AtMost`](crate::Boundaries::AtMost).
+    pub level: u8,
 }
 
+/// The highest level a section's top may have.
+pub const MAX_LEVEL: u8 = 7;
+
 impl Section {
-    /// A section of an exact `height` (negative counts as 0).
+    /// A section of an exact `height` (negative counts as 0), at level 0.
     pub fn new(id: SectionId, height: f32) -> Self {
         Self {
             id,
             height: height.max(0.0),
             estimated: false,
+            placeholder: false,
+            level: 0,
+        }
+    }
+
+    /// A section whose height is not known and has no estimate: drawn and
+    /// counted at its content's placeholder height until it is given one.
+    /// It is `estimated`.
+    pub fn placeholder(id: SectionId) -> Self {
+        Self {
+            estimated: true,
+            placeholder: true,
+            ..Self::new(id, 0.0)
+        }
+    }
+
+    /// The level of the boundary at its top (0-7; higher counts as 7).
+    #[must_use]
+    pub fn level(mut self, level: u8) -> Self {
+        self.level = level.min(MAX_LEVEL);
+        self
+    }
+
+    /// Its length in a list whose placeholder height is `placeholder`.
+    pub(crate) fn length(&self, placeholder: f32) -> f32 {
+        if self.placeholder {
+            placeholder
+        } else {
+            self.height
         }
     }
 
@@ -211,9 +251,34 @@ pub(crate) struct Job {
     pub(crate) ahead: bool,
 }
 
+/// The default placeholder height, in router pixels.
+pub const DEFAULT_PLACEHOLDER_HEIGHT: f32 = 96.0;
+
+/// The placeholder height (a newtype for its default).
+#[derive(Copy, Clone, Debug)]
+struct PlaceholderHeight(f32);
+
+impl Default for PlaceholderHeight {
+    fn default() -> Self {
+        Self(DEFAULT_PLACEHOLDER_HEIGHT)
+    }
+}
+
+/// Where a split or merged section's place went: the section now holding
+/// it and how far into that section its top was.
+type Replaced = HashMap<SectionId, (SectionId, f32)>;
+
+/// Most replacements remembered before the oldest are forgotten.
+const MAX_REPLACED: usize = 4096;
+
 #[derive(Default)]
 struct Inner {
     sections: Vec<Section>,
+    placeholder_height: PlaceholderHeight,
+    /// How many times the tops were rebuilt (for tests and counting).
+    rebuilds: u64,
+    /// Split and merged ids, for anchoring and flights.
+    replaced: Replaced,
     /// `tops[i]` is the offset of `sections[i]`; one more entry, the total.
     tops: Vec<f32>,
     index: HashMap<SectionId, usize>,
@@ -274,15 +339,52 @@ impl Inner {
     }
 
     fn rebuild(&mut self) {
+        self.rebuilds += 1;
         self.tops.clear();
         self.index.clear();
+        let ph = self.placeholder_height.0;
         let mut at = 0.0;
         for (i, s) in self.sections.iter().enumerate() {
             self.tops.push(at);
             self.index.entry(s.id).or_insert(i);
-            at += s.height;
+            at += s.length(ph);
         }
         self.tops.push(at);
+    }
+
+    /// The id index alone, mid-batch.
+    fn reindex(&mut self) {
+        self.index.clear();
+        for (i, s) in self.sections.iter().enumerate() {
+            self.index.entry(s.id).or_insert(i);
+        }
+    }
+
+    /// Remember that `old`'s place is now `off` into `new`, carrying on
+    /// any earlier replacement that led to `old`.
+    fn note_replaced(&mut self, old: SectionId, new: SectionId, off: f32) {
+        if old == new {
+            return;
+        }
+        if self.replaced.len() >= MAX_REPLACED {
+            self.replaced.clear();
+        }
+        for v in self.replaced.values_mut() {
+            if v.0 == old {
+                *v = (new, v.1 + off);
+            }
+        }
+        self.replaced.insert(old, (new, off));
+    }
+
+    /// Where `id`'s top is now: its own, or for a split or merged id, the
+    /// place it went to.
+    fn resolve_top(&self, id: SectionId) -> Option<f32> {
+        if let Some(t) = self.offset_of(id) {
+            return Some(t);
+        }
+        let &(new, off) = self.replaced.get(&id)?;
+        self.offset_of(new).map(|t| t + off)
     }
 
     fn total(&self) -> f32 {
@@ -302,6 +404,170 @@ impl Inner {
         // Empty sections share their top with the next one; the one holding
         // the offset is the last of them.
         Some(self.sections[i.saturating_sub(1)].id)
+    }
+}
+
+/// The locked list, in a batch ([`SectionedContent::edit`]).
+pub struct SectionEdit<'a> {
+    inner: &'a mut Inner,
+    /// The id index is behind the list: rebuilt on the next lookup.
+    index_dirty: bool,
+}
+
+impl fmt::Debug for SectionEdit<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SectionEdit")
+            .field("sections", &self.inner.sections.len())
+            .finish()
+    }
+}
+
+impl SectionEdit<'_> {
+    fn lookup(&mut self, id: SectionId) -> Option<usize> {
+        if self.index_dirty {
+            self.inner.reindex();
+            self.index_dirty = false;
+        }
+        self.inner.index.get(&id).copied()
+    }
+
+    /// Add a section at the end.
+    pub fn push(&mut self, section: Section) {
+        let (id, i) = (section.id, self.inner.sections.len());
+        self.inner.sections.push(section);
+        if !self.index_dirty {
+            self.inner.index.entry(id).or_insert(i);
+        }
+    }
+
+    /// Insert a section at `index` (clamped to the length).
+    pub fn insert(&mut self, index: usize, section: Section) {
+        let at = index.min(self.inner.sections.len());
+        self.inner.sections.insert(at, section);
+        self.index_dirty = true;
+    }
+
+    /// Remove the section `id`, returning it. Its bookmark is kept; its
+    /// kept drawing is dropped.
+    pub fn remove(&mut self, id: SectionId) -> Option<Section> {
+        let i = self.lookup(id)?;
+        self.index_dirty = true;
+        Some(self.inner.sections.remove(i))
+    }
+
+    /// Set a section's height (negative counts as 0), clearing its estimate
+    /// and placeholder flags. Returns whether the section exists.
+    pub fn set_height(&mut self, id: SectionId, h: f32) -> bool {
+        let Some(i) = self.lookup(id) else {
+            return false;
+        };
+        let s = &mut self.inner.sections[i];
+        s.height = h.max(0.0);
+        s.estimated = false;
+        s.placeholder = false;
+        true
+    }
+
+    /// Set a section's height as an estimate (negative counts as 0): no
+    /// longer a placeholder, still `estimated`.
+    pub fn set_estimate(&mut self, id: SectionId, h: f32) -> bool {
+        let Some(i) = self.lookup(id) else {
+            return false;
+        };
+        let s = &mut self.inner.sections[i];
+        s.height = h.max(0.0);
+        s.estimated = true;
+        s.placeholder = false;
+        true
+    }
+
+    /// Where section `id` is in the list now.
+    pub fn index_of(&mut self, id: SectionId) -> Option<usize> {
+        self.lookup(id)
+    }
+
+    /// How many sections there are now.
+    pub fn len(&self) -> usize {
+        self.inner.sections.len()
+    }
+
+    /// Whether there are none now.
+    pub fn is_empty(&self) -> bool {
+        self.inner.sections.is_empty()
+    }
+
+    /// Drop a replaced id's drawing and, unless it is still in the list
+    /// under `keep`, its bookmark.
+    fn forget(&mut self, id: SectionId, kept: &[SectionId]) {
+        self.inner.cache.remove(&id);
+        if self.inner.rendering.contains(&id) {
+            self.inner.invalidated_while_rendering.insert(id);
+        }
+        if !kept.contains(&id) {
+            self.inner.bookmarks.remove(&id);
+        }
+    }
+
+    /// Replace `id` with `pieces` (new ids, in order); false if absent.
+    /// The replaced id loses its drawing and bookmark (add the pieces'
+    /// bookmarks in the same batch). A pane anchored on it keeps its
+    /// distance from the first piece's top; a counted flight's target that
+    /// is split becomes the first piece.
+    pub fn split(&mut self, id: SectionId, pieces: Vec<Section>) -> bool {
+        let Some(i) = self.lookup(id) else {
+            return false;
+        };
+        let kept: Vec<SectionId> = pieces.iter().map(|p| p.id).collect();
+        let first = kept.first().copied();
+        self.inner.sections.splice(i..=i, pieces);
+        self.index_dirty = true;
+        self.forget(id, &kept);
+        if let Some(first) = first {
+            self.inner.note_replaced(id, first, 0.0);
+        }
+        true
+    }
+
+    /// Replace the consecutive run `first..=last` with `merged`; false if
+    /// either is absent or `last` is before `first`. The replaced ids lose
+    /// their drawings and bookmarks. A pane anchored inside the run keeps
+    /// its distance from the run's first top, now inside `merged`; a
+    /// counted flight's target in the run becomes the merged section.
+    pub fn merge(&mut self, first: SectionId, last: SectionId, merged: Section) -> bool {
+        let (Some(i), Some(j)) = (self.lookup(first), self.lookup(last)) else {
+            return false;
+        };
+        if j < i {
+            return false;
+        }
+        let ph = self.inner.placeholder_height.0;
+        let new = merged.id;
+        let mut at = 0.0;
+        let olds: Vec<(SectionId, f32)> = self.inner.sections[i..=j]
+            .iter()
+            .map(|s| {
+                let o = (s.id, at);
+                at += s.length(ph);
+                o
+            })
+            .collect();
+        self.inner.sections.splice(i..=j, std::iter::once(merged));
+        self.index_dirty = true;
+        for (id, off) in olds {
+            self.forget(id, &[new]);
+            self.inner.note_replaced(id, new, off);
+        }
+        true
+    }
+
+    /// Bookmark section `id` in this batch, replacing any bookmark it had.
+    pub fn add_bookmark(&mut self, id: SectionId, text: BookmarkText) {
+        self.inner.bookmarks.insert(id, text);
+    }
+
+    /// Remove section `id`'s bookmark in this batch, returning it.
+    pub fn remove_bookmark(&mut self, id: SectionId) -> Option<BookmarkText> {
+        self.inner.bookmarks.remove(&id)
     }
 }
 
@@ -360,9 +626,22 @@ impl SectionedContent {
         f(&mut self.inner.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
-    fn edit<R>(&self, f: impl FnOnce(&mut Inner) -> R) -> R {
+    /// Edit the list in one batch: the tops and the id index are rebuilt
+    /// once when `f` returns, the kept drawings of removed and replaced ids
+    /// are dropped, and a pane's next range update anchors once for the
+    /// whole batch. The single calls below are each a batch of one.
+    ///
+    /// `f` runs under the content's lock: it must not call this
+    /// `SectionedContent`'s methods (use the [`SectionEdit`]'s).
+    pub fn edit<R>(&self, f: impl FnOnce(&mut SectionEdit<'_>) -> R) -> R {
         self.with(|s| {
-            let r = f(s);
+            let r = {
+                let mut e = SectionEdit {
+                    inner: s,
+                    index_dirty: false,
+                };
+                f(&mut e)
+            };
             s.rebuild();
             s.prune_cache();
             r
@@ -372,42 +651,61 @@ impl SectionedContent {
     /// Replace the list. Bookmarks are kept, and so are the kept drawings
     /// of ids still present: invalidate those whose content changed.
     pub fn set_sections(&self, sections: Vec<Section>) {
-        self.edit(|s| s.sections = sections);
+        self.edit(|e| e.inner.sections = sections);
     }
 
     /// Add a section at the end.
     pub fn push(&self, section: Section) {
-        self.edit(|s| s.sections.push(section));
+        self.edit(|e| e.push(section));
     }
 
     /// Insert a section at `index` (clamped to the length).
     pub fn insert(&self, index: usize, section: Section) {
-        self.edit(|s| {
-            let at = index.min(s.sections.len());
-            s.sections.insert(at, section);
-        });
+        self.edit(|e| e.insert(index, section));
     }
 
     /// Remove the section `id`, returning it. Its bookmark is kept; its kept
     /// drawing is dropped.
     pub fn remove(&self, id: SectionId) -> Option<Section> {
-        self.edit(|s| {
-            let i = s.index.get(&id).copied()?;
-            Some(s.sections.remove(i))
-        })
+        self.edit(|e| e.remove(id))
     }
 
     /// Set a section's height (negative counts as 0), clearing its estimate
-    /// flag. Returns whether the section exists. Its kept drawing stays.
+    /// and placeholder flags. Returns whether the section exists. Its kept
+    /// drawing stays.
     pub fn set_height(&self, id: SectionId, height: f32) -> bool {
-        self.edit(|s| {
-            let Some(&i) = s.index.get(&id) else {
-                return false;
-            };
-            s.sections[i].height = height.max(0.0);
-            s.sections[i].estimated = false;
-            true
-        })
+        self.edit(|e| e.set_height(id, height))
+    }
+
+    /// Set a section's height as an estimate: it is no longer a
+    /// placeholder, and stays `estimated` until measured or set exactly.
+    pub fn set_estimate(&self, id: SectionId, height: f32) -> bool {
+        self.edit(|e| e.set_estimate(id, height))
+    }
+
+    /// The height a placeholder section counts as
+    /// ([`DEFAULT_PLACEHOLDER_HEIGHT`], 96 router pixels, by default;
+    /// negative counts as 0). Changing it rebuilds the tops once; a pane
+    /// anchors on it as on any height change.
+    pub fn set_placeholder_height(&self, h: f32) {
+        self.with(|s| {
+            let h = if h.is_finite() { h.max(0.0) } else { 0.0 };
+            if s.placeholder_height.0 != h {
+                s.placeholder_height = PlaceholderHeight(h);
+                s.rebuild();
+            }
+        });
+    }
+
+    /// The height a placeholder section counts as.
+    pub fn placeholder_height(&self) -> f32 {
+        self.with(|s| s.placeholder_height.0)
+    }
+
+    /// How many times the tops have been rebuilt.
+    #[cfg(test)]
+    pub(crate) fn rebuilds(&self) -> u64 {
+        self.with(|s| s.rebuilds)
     }
 
     /// How many sections there are.
@@ -540,7 +838,7 @@ impl SectionedContent {
 
     /// The tops, now, of `ids` (`None` for one no longer in the list).
     pub(crate) fn tops_of(&self, ids: &[SectionId]) -> Vec<Option<f32>> {
-        self.with(|s| ids.iter().map(|&id| s.offset_of(id)).collect())
+        self.with(|s| ids.iter().map(|&id| s.resolve_top(id)).collect())
     }
 
     /// The sections to draw for a frame at `width` and `theme` whose window
@@ -575,7 +873,7 @@ impl SectionedContent {
             let job = |s: &Inner, i: usize, ahead: bool| Job {
                 id: s.sections[i].id,
                 index: i,
-                height: s.sections[i].height,
+                height: s.sections[i].length(s.placeholder_height.0),
                 ahead,
             };
             let wanted = |s: &Inner, i: usize| {
@@ -627,11 +925,14 @@ impl SectionedContent {
                 let Some(&i) = s.index.get(&id) else {
                     continue;
                 };
+                let ph = s.placeholder_height.0;
                 if let Some(h) = reported
-                    && (h - s.sections[i].height).abs() > 0.5
+                    && (h - s.sections[i].length(ph)).abs() > 0.5
                 {
-                    s.sections[i].height = h;
-                    s.sections[i].estimated = false;
+                    let sec = &mut s.sections[i];
+                    sec.height = h;
+                    sec.estimated = false;
+                    sec.placeholder = false;
                     changed = true;
                 }
                 let generation = s.generation;
@@ -812,5 +1113,145 @@ mod tests {
         );
         c.clear_bookmarks();
         assert!(c.bookmarks().is_empty());
+    }
+    // ---- Plan 20261119_01, step 1: placeholders and batched edits ----
+
+    #[test]
+    fn a_placeholder_counts_at_the_contents_height_until_given_one() {
+        let c = SectionedContent::new();
+        c.set_sections(vec![
+            Section::new(SectionId(0), 100.0),
+            Section::placeholder(SectionId(1)),
+            Section::new(SectionId(2), 100.0),
+        ]);
+        let p = &c.sections()[1];
+        assert!(p.placeholder && p.estimated);
+        assert_eq!(c.placeholder_height(), 96.0);
+        assert_eq!(c.total_height(), 296.0);
+        assert_eq!(c.offset_of(SectionId(2)), Some(196.0));
+        assert_eq!(c.section_at(150.0), Some(SectionId(1)));
+        assert!(c.set_height(SectionId(1), 40.0));
+        let p = &c.sections()[1];
+        assert!(!p.placeholder && !p.estimated);
+        assert_eq!(c.total_height(), 240.0);
+        c.push(Section::placeholder(SectionId(3)));
+        assert!(c.set_estimate(SectionId(3), 10.0));
+        let p = &c.sections()[3];
+        assert!(!p.placeholder && p.estimated);
+        assert_eq!(c.total_height(), 250.0);
+    }
+
+    #[test]
+    fn set_placeholder_height_rebuilds_once() {
+        let c = SectionedContent::new();
+        c.set_sections(
+            (0..10)
+                .map(|i| Section::placeholder(SectionId(i)))
+                .collect(),
+        );
+        let before = c.rebuilds();
+        c.set_placeholder_height(50.0);
+        assert_eq!(c.rebuilds(), before + 1);
+        assert_eq!(c.total_height(), 500.0);
+        c.set_placeholder_height(50.0);
+        assert_eq!(c.rebuilds(), before + 1, "unchanged: no rebuild");
+    }
+
+    #[test]
+    fn an_edit_of_a_thousand_heights_rebuilds_the_tops_once() {
+        let c = SectionedContent::new();
+        c.set_sections(
+            (0..1000)
+                .map(|i| Section::new(SectionId(i), 10.0))
+                .collect(),
+        );
+        let before = c.rebuilds();
+        let n = c.edit(|e| {
+            (0..1000)
+                .filter(|&i| e.set_height(SectionId(i), 20.0))
+                .count()
+        });
+        assert_eq!(n, 1000);
+        assert_eq!(c.rebuilds(), before + 1);
+        assert_eq!(c.total_height(), 20_000.0);
+        assert_eq!(c.offset_of(SectionId(999)), Some(19_980.0));
+    }
+
+    #[test]
+    fn an_edit_sees_its_own_changes_and_drops_removed_drawings() {
+        let draw = |_: SectionId, _: &SectionContext| DrawList::new();
+        let c = SectionedContent::with_source(Arc::new(draw));
+        c.set_sections((0..10).map(|i| Section::new(SectionId(i), 100.0)).collect());
+        let theme = ControlTheme::default();
+        let jobs = c.prepare(400.0, &theme, 0.0, 1000.0, &HashSet::new(), 0);
+        c.render(&jobs, 400.0, &crate::traits::DrawContext::default());
+        assert!(c.is_cached(SectionId(3)) && c.is_cached(SectionId(4)));
+        c.edit(|e| {
+            e.insert(0, Section::new(SectionId(100), 5.0));
+            assert_eq!(e.index_of(SectionId(3)), Some(4));
+            assert!(e.remove(SectionId(3)).is_some());
+            assert_eq!(e.index_of(SectionId(4)), Some(4));
+            e.push(Section::new(SectionId(101), 5.0));
+            assert_eq!(e.index_of(SectionId(101)), Some(10));
+            assert_eq!(e.len(), 11);
+        });
+        assert!(!c.is_cached(SectionId(3)), "removed: dropped");
+        assert!(c.is_cached(SectionId(4)), "kept");
+    }
+
+    #[test]
+    fn levels_default_to_zero_and_clamp_at_seven() {
+        assert_eq!(Section::new(SectionId(0), 1.0).level, 0);
+        assert_eq!(Section::new(SectionId(0), 1.0).level(3).level, 3);
+        assert_eq!(Section::placeholder(SectionId(0)).level(200).level, 7);
+    }
+
+    #[test]
+    fn split_and_merge_in_one_edit_rebuild_once_and_drop_what_they_replace() {
+        let draw = |_: SectionId, _: &SectionContext| DrawList::new();
+        let c = SectionedContent::with_source(Arc::new(draw));
+        c.set_sections((0..10).map(|i| Section::new(SectionId(i), 100.0)).collect());
+        for i in 0..10 {
+            c.add_bookmark(SectionId(i), BookmarkText::Text(format!("{i}")));
+        }
+        let theme = ControlTheme::default();
+        let jobs = c.prepare(400.0, &theme, 0.0, 1000.0, &HashSet::new(), 0);
+        c.render(&jobs, 400.0, &crate::traits::DrawContext::default());
+        let before = c.rebuilds();
+        let ok = c.edit(|e| {
+            let a = e.split(
+                SectionId(2),
+                vec![
+                    Section::new(SectionId(20), 30.0).level(1),
+                    Section::new(SectionId(21), 70.0).level(2),
+                ],
+            );
+            let b = e.merge(
+                SectionId(5),
+                SectionId(7),
+                Section::new(SectionId(50), 300.0),
+            );
+            e.add_bookmark(SectionId(20), BookmarkText::Text("20".into()));
+            let bad = e.merge(SectionId(9), SectionId(8), Section::new(SectionId(90), 1.0));
+            assert!(!e.split(SectionId(99), Vec::new()));
+            a && b && !bad
+        });
+        assert!(ok);
+        assert_eq!(c.rebuilds(), before + 1);
+        let ids: Vec<u64> = c.sections().iter().map(|s| s.id.0).collect();
+        assert_eq!(ids, [0, 1, 20, 21, 3, 4, 50, 8, 9]);
+        assert_eq!(c.total_height(), 1000.0);
+        for gone in [2, 5, 6, 7] {
+            assert!(!c.is_cached(SectionId(gone)));
+            assert!(c.remove_bookmark(SectionId(gone)).is_none(), "{gone}");
+        }
+        assert!(c.is_cached(SectionId(4)));
+        assert!(c.remove_bookmark(SectionId(4)).is_some());
+        assert!(c.remove_bookmark(SectionId(20)).is_some());
+        // A merged id resolves into the merged section at its old distance.
+        c.with(|s| {
+            assert_eq!(s.resolve_top(SectionId(6)), Some(600.0));
+            assert_eq!(s.resolve_top(SectionId(2)), Some(200.0));
+        });
     }
 }
